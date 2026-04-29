@@ -38,11 +38,32 @@ const sb = {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}&status=eq.active&select=*&limit=1`, { headers:this.authH(token) });
     const d = await r.json(); return Array.isArray(d)?d[0]:null;
   },
+  async getUser(token: string) {
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: this.authH(token)
+  });
+  return r.json();
+},
+async refreshToken(refresh_token: string) {
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST", headers: this.h,
+    body: JSON.stringify({ refresh_token })
+  });
+  return r.json();
+},
   async saveProfile(token:string, userId:string, profile:any) {
     return this.upsertProfile(token, userId, profile);
   },
 };
-
+// ── TOKEN HELPER ───────────────────────────────────────────────────
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp * 1000 < Date.now() + 60_000;
+  } catch {
+    return true;
+  }
+}
 // ── PALETTE ────────────────────────────────────────────────────────
 const C:any = {
   darkBg:"#040D1A", darkSurface:"#0A1628", darkBorder:"#1B3A6B",
@@ -286,12 +307,66 @@ function AuthGate() {
   };
 
   useEffect(() => {
+  const initAuth = async () => {
+    // Detectar callback de confirmación de email (hash en URL)
+    const hash = window.location.hash;
+    if (hash && hash.includes("access_token")) {
+      const params = new URLSearchParams(hash.substring(1));
+      const access_token  = params.get("access_token");
+      const refresh_token = params.get("refresh_token");
+      if (access_token) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        try {
+          const user = await sb.getUser(access_token);
+          if (user && user.id) {
+            const sess = { access_token, refresh_token, user };
+            localStorage.setItem("minerva_session", JSON.stringify(sess));
+            setSession(sess);
+            await load(sess);
+            return;
+          }
+        } catch {}
+      }
+    }
+    // Leer sesión guardada
     const stored = localStorage.getItem("minerva_session");
-    if (stored) {
-      try { const sess = JSON.parse(stored); setSession(sess); load(sess); }
-      catch { setLoading(false); }
-    } else { setLoading(false); }
-  }, []);
+    if (!stored) { setLoading(false); return; }
+    try {
+      const sess = JSON.parse(stored);
+      // Verificar si el token expiró
+      if (isTokenExpired(sess.access_token)) {
+        if (sess.refresh_token) {
+          const refreshed = await sb.refreshToken(sess.refresh_token);
+          if (refreshed.access_token) {
+            const user = await sb.getUser(refreshed.access_token);
+            const newSess = {
+              access_token:  refreshed.access_token,
+              refresh_token: refreshed.refresh_token || sess.refresh_token,
+              user: user.id ? user : sess.user,
+            };
+            localStorage.setItem("minerva_session", JSON.stringify(newSess));
+            setSession(newSess);
+            await load(newSess);
+          } else {
+            localStorage.removeItem("minerva_session");
+            setLoading(false);
+          }
+        } else {
+          localStorage.removeItem("minerva_session");
+          setLoading(false);
+        }
+        return;
+      }
+      // Token válido
+      setSession(sess);
+      await load(sess);
+    } catch {
+      localStorage.removeItem("minerva_session");
+      setLoading(false);
+    }
+  };
+  initAuth();
+}, []);
 
   const refresh = async () => { setLoading(true); await load(session); };
 
@@ -302,13 +377,22 @@ function AuthGate() {
     setRoute("login"); setLoading(false);
   };
 
-  const updateSession = (sess:any) => {
-    setSession(sess);
-    if (sess) localStorage.setItem("minerva_session", JSON.stringify(sess));
-    else localStorage.removeItem("minerva_session");
-    setLoading(true);
-    load(sess);
-  };
+  const updateSession = async (sess: any) => {
+  if (sess) {
+    if (!sess.user?.id && sess.access_token) {
+      try {
+        const user = await sb.getUser(sess.access_token);
+        if (user.id) sess = { ...sess, user };
+      } catch {}
+    }
+    localStorage.setItem("minerva_session", JSON.stringify(sess));
+  } else {
+    localStorage.removeItem("minerva_session");
+  }
+  setSession(sess);
+  setLoading(true);
+  await load(sess);
+};
 
   const navigate = (r: Route) => setRoute(r);
 
@@ -348,19 +432,34 @@ function LoginScreen({ onAuth }:any) {
     setLoading(true);
     try {
       if (mode==="login") {
-        const d = await sb.signIn(email, pass);
-        if (d.error) setMsg({type:"error",text:"Correo o contraseña incorrectos"});
-        else onAuth(d);
-      } else if (mode==="register") {
-        if (pass.length<6) { setMsg({type:"error",text:"La contraseña debe tener al menos 6 caracteres"}); setLoading(false); return; }
-        const d = await sb.signUp(email, pass);
-        if (d.error) setMsg({type:"error",text:d.error.message||"Error al crear cuenta"});
-        else if (d.access_token) { onAuth(d); }
-        else setMsg({type:"ok",text:"Cuenta creada. Inicia sesión para continuar."});
-      } else {
-        await sb.resetPassword(email);
-        setMsg({type:"ok",text:"Te enviamos un enlace para restablecer tu contraseña"});
-      }
+  const d = await sb.signIn(email, pass);
+  if (d.error || d.error_description) {
+    if (
+      d.error_description?.toLowerCase().includes("email not confirmed") ||
+      d.error?.toLowerCase().includes("email not confirmed")
+    ) {
+      setMsg({type:"error", text:"Tu correo aún no está confirmado. Revisa tu bandeja de entrada y haz clic en el enlace de activación."});
+    } else {
+      setMsg({type:"error", text:"Correo o contraseña incorrectos"});
+    }
+  } else {
+    onAuth(d);
+  }
+} else if (mode==="register") {
+  if (pass.length<6) { setMsg({type:"error",text:"La contraseña debe tener al menos 6 caracteres"}); setLoading(false); return; }
+  const d = await sb.signUp(email, pass);
+  if (d.error) {
+    setMsg({type:"error", text:d.error.message||"Error al crear cuenta"});
+  } else if (d.access_token) {
+    onAuth(d);
+  } else {
+    setMsg({type:"ok", text:"¡Cuenta creada! Revisa tu correo y haz clic en el enlace de activación. Puede tardar 1–2 minutos en llegar."});
+    setMode("login");
+  }
+} else {
+  await sb.resetPassword(email);
+  setMsg({type:"ok", text:"Te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja de entrada."});
+}
     } catch { setMsg({type:"error",text:"Error de conexión"}); }
     setLoading(false);
   };
@@ -426,22 +525,36 @@ function OnboardingRoute() {
   const [empresa, setEmpresa] = useState(""); const [pais, setPais] = useState(""); const [giro, setGiro] = useState(""); const [loading, setLoading] = useState(false); const [err, setErr] = useState("");
   const sel = { width:"100%", padding:"11px 14px", borderRadius:10, fontSize:13, border:`1.5px solid ${C.lightBorder}`, background:C.lightCard, color:C.textDark, fontFamily:"inherit", outline:"none", boxSizing:"border-box" as const };
 
-  if (!session) { navigate("login"); return null; }
+  useEffect(() => {
+  if (!session) navigate("login");
+}, [session]);
+
+if (!session) return null;
 
   const handleSave = async () => {
-    if (!empresa.trim()) { setErr("Ingresa el nombre de tu empresa"); return; }
-    if (!pais) { setErr("Selecciona tu país"); return; }
-    if (!giro) { setErr("Selecciona el giro"); return; }
-    setLoading(true);
-    try {
-      await sb.upsertProfile(session.access_token, session.user.id, {
-        empresa, pais, giro, onboarding_done:true, profile_completed:true
-      });
-      await refresh();
-      navigate(subscription ? "dashboard" : "pricing");
-    } catch { setErr("Error al guardar. Intenta nuevamente."); }
-    setLoading(false);
-  };
+  if (!empresa.trim()) { setErr("Ingresa el nombre de tu empresa"); return; }
+  if (!pais) { setErr("Selecciona tu país"); return; }
+  if (!giro) { setErr("Selecciona el giro"); return; }
+  setLoading(true);
+  setErr("");
+  try {
+    const result = await sb.upsertProfile(session.access_token, session.user.id, {
+      empresa, pais, giro, onboarding_done:true, profile_completed:true
+    });
+    const hasError = !Array.isArray(result) && result !== null &&
+      (result.code || result.error || result.message);
+    if (hasError) {
+      setErr("No se pudo guardar el perfil. Verifica tu conexión e intenta nuevamente.");
+      setLoading(false);
+      return;
+    }
+    await refresh();
+    navigate(subscription ? "dashboard" : "pricing");
+  } catch {
+    setErr("Error de conexión. Intenta nuevamente.");
+  }
+  setLoading(false);
+};
 
   return (
     <div style={{minHeight:"100vh",background:C.lightBg,display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 24px",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
@@ -485,8 +598,12 @@ function OnboardingRoute() {
 function PricingRoute() {
   const { session, profile, navigate } = useAuth();
 
-  if (!session) { navigate("login"); return null; }
-  if (!profile?.profile_completed) { navigate("onboarding"); return null; }
+  useEffect(() => {
+  if (!session) navigate("login");
+  else if (!profile?.profile_completed) navigate("onboarding");
+}, [session, profile]);
+
+if (!session || !profile?.profile_completed) return null;
 
   const plans = [
     {
@@ -563,7 +680,9 @@ function PricingRoute() {
                 ))}
               </div>
               <a
-                href={p.id==="enterprise" ? "https://minervaai-production-9c2d.up.railway.app/enterprise" : `https://minervaai-production-9c2d.up.railway.app/checkout?plan=${p.id}`}
+                href={p.id==="enterprise"
+  ? `https://minervaai-production-9c2d.up.railway.app/enterprise?uid=${session?.user?.id}`
+  : `https://minervaai-production-9c2d.up.railway.app/checkout?plan=${p.id}&uid=${session?.user?.id}&email=${encodeURIComponent(session?.user?.email||"")}`}
                 style={{display:"block",textAlign:"center",padding:"14px",borderRadius:12,fontSize:14,fontWeight:700,textDecoration:"none",background:p.featured?C.blueMain:"transparent",color:p.featured?"#fff":"rgba(200,216,240,.7)",border:p.featured?"none":"1px solid rgba(255,255,255,.15)",transition:"all .2s",fontFamily:"inherit"}}
                 onMouseEnter={e=>{if(!p.featured)(e.currentTarget as any).style.borderColor="rgba(255,255,255,.4)";}}
                 onMouseLeave={e=>{if(!p.featured)(e.currentTarget as any).style.borderColor="rgba(255,255,255,.15)";}}
@@ -1152,9 +1271,13 @@ function DashboardScreen() {
   const [marketCustomContext, setMarketCustomContext] = useState("");
   const [modelCustomDesc,     setModelCustomDesc]     = useState("");
 
-  if (!session) { navigate("login"); return null; }
-  if (!profile?.profile_completed) { navigate("onboarding"); return null; }
-  if (!subscription) { navigate("pricing"); return null; }
+  useEffect(() => {
+  if (!session) navigate("login");
+  else if (!profile?.profile_completed) navigate("onboarding");
+  else if (!subscription) navigate("pricing");
+}, [session, profile, subscription]);
+
+if (!session || !profile?.profile_completed || !subscription) return null;
 
   const SCREENS = ["market","model","client","neural","sim"];
   const step = SCREENS.indexOf(simScreen);
