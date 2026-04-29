@@ -33,37 +33,23 @@ const sb = {
       body:JSON.stringify({id:userId,...data})
     });
     return r.json();
-  },
+  },async updatePassword(token: string, newPassword: string) {
+     const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+       method: "PUT",
+       headers: this.authH(token),
+       body: JSON.stringify({ password: newPassword })
+     });
+     return r.json();
+   },
   async getSubscription(token:string, userId:string) {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}&status=eq.active&select=*&limit=1`, { headers:this.authH(token) });
     const d = await r.json(); return Array.isArray(d)?d[0]:null;
   },
-  async getUser(token: string) {
-  const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: this.authH(token)
-  });
-  return r.json();
-},
-async refreshToken(refresh_token: string) {
-  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-    method: "POST", headers: this.h,
-    body: JSON.stringify({ refresh_token })
-  });
-  return r.json();
-},
   async saveProfile(token:string, userId:string, profile:any) {
     return this.upsertProfile(token, userId, profile);
   },
 };
-// ── TOKEN HELPER ───────────────────────────────────────────────────
-function isTokenExpired(token: string): boolean {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.exp * 1000 < Date.now() + 60_000;
-  } catch {
-    return true;
-  }
-}
+
 // ── PALETTE ────────────────────────────────────────────────────────
 const C:any = {
   darkBg:"#040D1A", darkSurface:"#0A1628", darkBorder:"#1B3A6B",
@@ -307,66 +293,12 @@ function AuthGate() {
   };
 
   useEffect(() => {
-  const initAuth = async () => {
-    // Detectar callback de confirmación de email (hash en URL)
-    const hash = window.location.hash;
-    if (hash && hash.includes("access_token")) {
-      const params = new URLSearchParams(hash.substring(1));
-      const access_token  = params.get("access_token");
-      const refresh_token = params.get("refresh_token");
-      if (access_token) {
-        window.history.replaceState({}, document.title, window.location.pathname);
-        try {
-          const user = await sb.getUser(access_token);
-          if (user && user.id) {
-            const sess = { access_token, refresh_token, user };
-            localStorage.setItem("minerva_session", JSON.stringify(sess));
-            setSession(sess);
-            await load(sess);
-            return;
-          }
-        } catch {}
-      }
-    }
-    // Leer sesión guardada
     const stored = localStorage.getItem("minerva_session");
-    if (!stored) { setLoading(false); return; }
-    try {
-      const sess = JSON.parse(stored);
-      // Verificar si el token expiró
-      if (isTokenExpired(sess.access_token)) {
-        if (sess.refresh_token) {
-          const refreshed = await sb.refreshToken(sess.refresh_token);
-          if (refreshed.access_token) {
-            const user = await sb.getUser(refreshed.access_token);
-            const newSess = {
-              access_token:  refreshed.access_token,
-              refresh_token: refreshed.refresh_token || sess.refresh_token,
-              user: user.id ? user : sess.user,
-            };
-            localStorage.setItem("minerva_session", JSON.stringify(newSess));
-            setSession(newSess);
-            await load(newSess);
-          } else {
-            localStorage.removeItem("minerva_session");
-            setLoading(false);
-          }
-        } else {
-          localStorage.removeItem("minerva_session");
-          setLoading(false);
-        }
-        return;
-      }
-      // Token válido
-      setSession(sess);
-      await load(sess);
-    } catch {
-      localStorage.removeItem("minerva_session");
-      setLoading(false);
-    }
-  };
-  initAuth();
-}, []);
+    if (stored) {
+      try { const sess = JSON.parse(stored); setSession(sess); load(sess); }
+      catch { setLoading(false); }
+    } else { setLoading(false); }
+  }, []);
 
   const refresh = async () => { setLoading(true); await load(session); };
 
@@ -377,22 +309,13 @@ function AuthGate() {
     setRoute("login"); setLoading(false);
   };
 
-  const updateSession = async (sess: any) => {
-  if (sess) {
-    if (!sess.user?.id && sess.access_token) {
-      try {
-        const user = await sb.getUser(sess.access_token);
-        if (user.id) sess = { ...sess, user };
-      } catch {}
-    }
-    localStorage.setItem("minerva_session", JSON.stringify(sess));
-  } else {
-    localStorage.removeItem("minerva_session");
-  }
-  setSession(sess);
-  setLoading(true);
-  await load(sess);
-};
+  const updateSession = (sess:any) => {
+    setSession(sess);
+    if (sess) localStorage.setItem("minerva_session", JSON.stringify(sess));
+    else localStorage.removeItem("minerva_session");
+    setLoading(true);
+    load(sess);
+  };
 
   const navigate = (r: Route) => setRoute(r);
 
@@ -432,34 +355,19 @@ function LoginScreen({ onAuth }:any) {
     setLoading(true);
     try {
       if (mode==="login") {
-  const d = await sb.signIn(email, pass);
-  if (d.error || d.error_description) {
-    if (
-      d.error_description?.toLowerCase().includes("email not confirmed") ||
-      d.error?.toLowerCase().includes("email not confirmed")
-    ) {
-      setMsg({type:"error", text:"Tu correo aún no está confirmado. Revisa tu bandeja de entrada y haz clic en el enlace de activación."});
-    } else {
-      setMsg({type:"error", text:"Correo o contraseña incorrectos"});
-    }
-  } else {
-    onAuth(d);
-  }
-} else if (mode==="register") {
-  if (pass.length<6) { setMsg({type:"error",text:"La contraseña debe tener al menos 6 caracteres"}); setLoading(false); return; }
-  const d = await sb.signUp(email, pass);
-  if (d.error) {
-    setMsg({type:"error", text:d.error.message||"Error al crear cuenta"});
-  } else if (d.access_token) {
-    onAuth(d);
-  } else {
-    setMsg({type:"ok", text:"¡Cuenta creada! Revisa tu correo y haz clic en el enlace de activación. Puede tardar 1–2 minutos en llegar."});
-    setMode("login");
-  }
-} else {
-  await sb.resetPassword(email);
-  setMsg({type:"ok", text:"Te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja de entrada."});
-}
+        const d = await sb.signIn(email, pass);
+        if (d.error) setMsg({type:"error",text:"Correo o contraseña incorrectos"});
+        else onAuth(d);
+      } else if (mode==="register") {
+        if (pass.length<6) { setMsg({type:"error",text:"La contraseña debe tener al menos 6 caracteres"}); setLoading(false); return; }
+        const d = await sb.signUp(email, pass);
+        if (d.error) setMsg({type:"error",text:d.error.message||"Error al crear cuenta"});
+        else if (d.access_token) { onAuth(d); }
+        else setMsg({type:"ok",text:"Cuenta creada. Inicia sesión para continuar."});
+      } else {
+        await sb.resetPassword(email);
+        setMsg({type:"ok",text:"Te enviamos un enlace para restablecer tu contraseña"});
+      }
     } catch { setMsg({type:"error",text:"Error de conexión"}); }
     setLoading(false);
   };
@@ -525,36 +433,22 @@ function OnboardingRoute() {
   const [empresa, setEmpresa] = useState(""); const [pais, setPais] = useState(""); const [giro, setGiro] = useState(""); const [loading, setLoading] = useState(false); const [err, setErr] = useState("");
   const sel = { width:"100%", padding:"11px 14px", borderRadius:10, fontSize:13, border:`1.5px solid ${C.lightBorder}`, background:C.lightCard, color:C.textDark, fontFamily:"inherit", outline:"none", boxSizing:"border-box" as const };
 
-  useEffect(() => {
-  if (!session) navigate("login");
-}, [session]);
-
-if (!session) return null;
+  if (!session) { navigate("login"); return null; }
 
   const handleSave = async () => {
-  if (!empresa.trim()) { setErr("Ingresa el nombre de tu empresa"); return; }
-  if (!pais) { setErr("Selecciona tu país"); return; }
-  if (!giro) { setErr("Selecciona el giro"); return; }
-  setLoading(true);
-  setErr("");
-  try {
-    const result = await sb.upsertProfile(session.access_token, session.user.id, {
-      empresa, pais, giro, onboarding_done:true, profile_completed:true
-    });
-    const hasError = !Array.isArray(result) && result !== null &&
-      (result.code || result.error || result.message);
-    if (hasError) {
-      setErr("No se pudo guardar el perfil. Verifica tu conexión e intenta nuevamente.");
-      setLoading(false);
-      return;
-    }
-    await refresh();
-    navigate(subscription ? "dashboard" : "pricing");
-  } catch {
-    setErr("Error de conexión. Intenta nuevamente.");
-  }
-  setLoading(false);
-};
+    if (!empresa.trim()) { setErr("Ingresa el nombre de tu empresa"); return; }
+    if (!pais) { setErr("Selecciona tu país"); return; }
+    if (!giro) { setErr("Selecciona el giro"); return; }
+    setLoading(true);
+    try {
+      await sb.upsertProfile(session.access_token, session.user.id, {
+        empresa, pais, giro, onboarding_done:true, profile_completed:true
+      });
+      await refresh();
+      navigate(subscription ? "dashboard" : "pricing");
+    } catch { setErr("Error al guardar. Intenta nuevamente."); }
+    setLoading(false);
+  };
 
   return (
     <div style={{minHeight:"100vh",background:C.lightBg,display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 24px",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
@@ -594,109 +488,272 @@ if (!session) return null;
   );
 }
 
-// ── PRICING ROUTE ──────────────────────────────────────────────────
-function PricingRoute() {
-  const { session, profile, navigate } = useAuth();
+// ===== CHECKOUT ROUTE COMPLETO =====
+app.get('/checkout', (req, res) => {
+  const { plan } = req.query;
+  
+  // Validar plan
+  if (!plan || !['salesman', 'pyme'].includes(plan)) {
+    return res.redirect('https://minervaai-production-9c2d.up.railway.app');
+  }
 
-  useEffect(() => {
-  if (!session) navigate("login");
-  else if (!profile?.profile_completed) navigate("onboarding");
-}, [session, profile]);
-
-if (!session || !profile?.profile_completed) return null;
-
-  const plans = [
-    {
-      id:"salesman", name:"Salesman", badge:"INDIVIDUAL",
-      price:"$30.000", currency:"CLP/mes",
-      tagline:"Brilla en tu organización con inteligencia estratégica",
-      features:["1 usuario","20 simulaciones al mes","11 mercados verticales","3 modelos comerciales","Informe ejecutivo PDF","Dashboard personal"],
-      cta:"Contratar Salesman →", featured:false,
+  // Configuración de planes
+  const planDetails = {
+    salesman: { 
+      name: 'Plan Salesman', 
+      price: 30000,
+      originalPrice: 60000,
+      discount: 50,
+      features: '1 usuario, 20 simulaciones/mes, Dashboard personal',
+      badge: '🔥 OFERTA 50% OFF',
+      popular: false
     },
-    {
-      id:"pyme", name:"Pyme Enterprise", badge:"MÁS POPULAR",
-      price:"$300.000", currency:"CLP/mes",
-      tagline:"Equipa a todo tu equipo comercial",
-      features:["Hasta 5 usuarios","100 simulaciones al mes","11 mercados verticales","3 modelos comerciales","Informe ejecutivo PDF","Dashboard empresa + vendedor","Gestión de equipo"],
-      cta:"Contratar Pyme →", featured:true,
-    },
-    {
-      id:"enterprise", name:"Business Enterprise", badge:"PREMIUM",
-      price:"A cotizar", currency:"según requerimientos",
-      tagline:"Solución a medida para grandes equipos",
-      features:["Usuarios ilimitados","Simulaciones ilimitadas","Integración CRM","Dashboard enterprise","Desarrollo a medida","Soporte prioritario"],
-      cta:"Contactar →", featured:false,
-    },
-  ];
+    pyme: { 
+      name: 'Plan Pyme Enterprise', 
+      price: 300000, 
+      features: '5 usuarios, 100 simulaciones/mes, Dashboard empresa + vendedor',
+      badge: '⭐ MÁS POPULAR',
+      popular: true
+    }
+  };
 
-  return (
-    <div style={{minHeight:"100vh",background:C.darkBg,fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif",padding:"48px 24px 80px"}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');*{box-sizing:border-box}`}</style>
-
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",maxWidth:900,margin:"0 auto 48px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:32,height:32,borderRadius:8,background:C.darkSurface,border:`1.5px solid ${C.darkBorder}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🧠</div>
-          <div><div style={{fontSize:13,fontWeight:800,color:C.textLight}}>MINERVA</div><div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:8,color:C.nodeCyan,letterSpacing:".1em"}}>DEAL.ENGINE</div></div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <span style={{fontSize:12,color:C.textLight,opacity:.4}}>{session?.user?.email}</span>
-          <button onClick={()=>navigate("onboarding")} style={{background:"none",border:`1px solid ${C.darkBorder}`,borderRadius:8,padding:"6px 12px",color:C.textLight,fontSize:11,cursor:"pointer",fontFamily:"inherit",opacity:.6}}>← Perfil</button>
-        </div>
-      </div>
-
-      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:48,justifyContent:"center"}}>
-        {["Cuenta","Perfil","Plan","Dashboard"].map((s,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <div style={{width:24,height:24,borderRadius:"50%",background:i<=1?C.success:i===2?C.nodeCyan:C.darkBorder,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:i<=2?"#000":C.textDim,fontFamily:"'JetBrains Mono',monospace"}}>{i<=1?"✓":i+1}</div>
-              <span style={{fontSize:11,fontWeight:i===2?700:400,color:i===2?C.textLight:i<2?C.nodeCyan:C.textDim}}>{s}</span>
-            </div>
-            {i<3&&<div style={{width:20,height:1,background:C.darkBorder,marginLeft:2}}/>}
-          </div>
-        ))}
-      </div>
-
-      <div style={{maxWidth:900,margin:"0 auto",textAlign:"center"}}>
-        <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:C.nodeCyan,letterSpacing:".18em",textTransform:"uppercase" as const,marginBottom:12}}>Elige tu plan</div>
-        <h1 style={{fontSize:"clamp(28px,4vw,42px)",fontWeight:800,letterSpacing:"-.04em",color:C.textLight,margin:"0 0 10px",lineHeight:1.1}}>Simple, transparente,<br/>sin sorpresas.</h1>
-        <p style={{fontSize:15,color:C.textLight,opacity:.5,marginBottom:48}}>Un vendedor que cierra una sola venta adicional al mes paga el plan 10 veces.</p>
-
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16,textAlign:"left"}}>
-          {plans.map(p=>(
-            <div key={p.id} style={{position:"relative",background:p.featured?"rgba(0,102,204,.12)":C.darkSurface,border:`1.5px solid ${p.featured?"rgba(0,102,204,.5)":C.darkBorder}`,borderRadius:20,padding:"32px 28px",display:"flex",flexDirection:"column",gap:0}}>
-              {p.featured&&<div style={{position:"absolute",top:-12,left:"50%",transform:"translateX(-50%)",background:C.blueMain,color:"#fff",fontSize:9,fontWeight:700,padding:"3px 14px",borderRadius:980,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em",whiteSpace:"nowrap" as const}}>{p.badge}</div>}
-              {!p.featured&&<div style={{display:"inline-block",background:"rgba(0,168,255,.1)",border:"1px solid rgba(0,168,255,.25)",borderRadius:980,padding:"3px 10px",fontFamily:"'JetBrains Mono',monospace",fontSize:9,color:"rgba(0,168,255,.9)",letterSpacing:".1em",marginBottom:14}}>{p.badge}</div>}
-              {p.featured&&<div style={{height:14}}/>}
-              <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"rgba(200,216,240,.6)",letterSpacing:".12em",textTransform:"uppercase" as const,marginBottom:12}}>{p.name}</div>
-              <div style={{fontSize:p.id==="enterprise"?28:40,fontWeight:800,color:C.textLight,letterSpacing:"-.04em",lineHeight:1,marginBottom:4}}>{p.price} <span style={{fontSize:14,fontWeight:400,color:"rgba(200,216,240,.4)"}}>{p.currency}</span></div>
-              <div style={{fontSize:12,color:"rgba(200,216,240,.45)",marginBottom:20,lineHeight:1.5}}>{p.tagline}</div>
-              <div style={{height:1,background:"rgba(255,255,255,.08)",marginBottom:20}}/>
-              <div style={{display:"flex",flexDirection:"column" as const,gap:10,marginBottom:28,flex:1}}>
-                {p.features.map((f,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"flex-start",gap:10}}>
-                    <span style={{color:C.success,fontSize:13,flexShrink:0,marginTop:1}}>✓</span>
-                    <span style={{fontSize:13,color:"rgba(200,216,240,.8)",lineHeight:1.5}}>{f}</span>
-                  </div>
-                ))}
-              </div>
-              <a
-                href={p.id==="enterprise"
-  ? `https://minervaai-production-9c2d.up.railway.app/enterprise?uid=${session?.user?.id}`
-  : `https://minervaai-production-9c2d.up.railway.app/checkout?plan=${p.id}&uid=${session?.user?.id}&email=${encodeURIComponent(session?.user?.email||"")}`}
-                style={{display:"block",textAlign:"center",padding:"14px",borderRadius:12,fontSize:14,fontWeight:700,textDecoration:"none",background:p.featured?C.blueMain:"transparent",color:p.featured?"#fff":"rgba(200,216,240,.7)",border:p.featured?"none":"1px solid rgba(255,255,255,.15)",transition:"all .2s",fontFamily:"inherit"}}
-                onMouseEnter={e=>{if(!p.featured)(e.currentTarget as any).style.borderColor="rgba(255,255,255,.4)";}}
-                onMouseLeave={e=>{if(!p.featured)(e.currentTarget as any).style.borderColor="rgba(255,255,255,.15)";}}
-              >{p.cta}</a>
-            </div>
-          ))}
-        </div>
-
-        <p style={{marginTop:32,fontSize:12,color:"rgba(200,216,240,.3)",fontFamily:"'JetBrains Mono',monospace"}}>¿Ya tienes una suscripción activa? <button onClick={()=>navigate("dashboard")} style={{background:"none",border:"none",color:C.nodeCyan,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Ir al dashboard →</button></p>
-      </div>
-    </div>
-  );
+  const selectedPlan = planDetails[plan];
+  
+  res.send(`<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Checkout · ${selectedPlan.name} · MINERVA</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #040D1A; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #F0F4FF; min-height: 100vh; }
+.container { max-width: 500px; margin: 40px auto; padding: 20px; }
+.header { text-align: center; margin-bottom: 32px; }
+.brand { font-size: 22px; font-weight: 800; margin-bottom: 4px; letter-spacing: -.02em; }
+.subtitle { font-size: 10px; color: #00A8FF; letter-spacing: .2em; font-family: monospace; }
+.card { background: #0A1628; border: 1px solid #1B3A6B; border-radius: 16px; padding: 24px; margin-bottom: 24px; position: relative; }
+.plan-badge { 
+  position: absolute; top: -12px; left: 50%; transform: translateX(-50%); 
+  background: ${selectedPlan.popular ? '#0066CC' : '#ff6b35'}; 
+  color: #fff; font-size: 10px; font-weight: 700; 
+  padding: 4px 12px; border-radius: 20px; 
+  letter-spacing: .05em; white-space: nowrap;
 }
+.plan-name { font-size: 18px; font-weight: 700; margin: 16px 0 8px; }
+.original-price { 
+  font-size: 16px; color: #ff6b6b; text-decoration: line-through; 
+  margin-bottom: 4px; opacity: .8;
+}
+.plan-price { font-size: 32px; font-weight: 800; margin-bottom: 6px; }
+.plan-price span { font-size: 16px; opacity: .6; font-weight: 400; }
+.discount-text { 
+  font-size: 13px; color: #059669; font-weight: 600; 
+  margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
+}
+.plan-features { font-size: 14px; color: #C8D8F0; line-height: 1.5; }
+.form-group { margin-bottom: 18px; }
+.form-label { display: block; margin-bottom: 8px; font-size: 13px; color: #C8D8F0; font-weight: 600; }
+.form-input { 
+  width: 100%; padding: 14px; border: 1px solid #1B3A6B; border-radius: 10px; 
+  background: #040D1A; color: #F0F4FF; font-size: 14px; transition: border-color .2s;
+}
+.form-input:focus { outline: none; border-color: #0066CC; box-shadow: 0 0 0 3px rgba(0,102,204,.1); }
+.discount-input { background: rgba(0,102,204,.06); border-color: rgba(0,102,204,.3); }
+.discount-hint { font-size: 11px; color: rgba(200,216,240,.4); margin-top: 4px; }
+.price-summary { 
+  border-top: 1px solid #1B3A6B; padding-top: 20px; margin-bottom: 24px; 
+  background: rgba(0,102,204,.03); border-radius: 8px; padding: 16px;
+}
+.price-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 14px; }
+.discount-row { color: #059669; display: none; font-weight: 600; }
+.total-row { 
+  font-size: 20px; font-weight: 800; color: #F0F4FF; 
+  border-top: 1px solid rgba(255,255,255,.1); padding-top: 12px; margin-top: 12px;
+}
+.submit-btn { 
+  width: 100%; padding: 18px; background: linear-gradient(135deg, #0066CC 0%, #0052A3 100%); 
+  color: #fff; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; 
+  cursor: pointer; transition: all .3s; box-shadow: 0 4px 15px rgba(0,102,204,.3);
+}
+.submit-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,102,204,.4); }
+.submit-btn:active { transform: translateY(0); }
+.loading { opacity: .7; pointer-events: none; cursor: not-allowed; }
+.security-badge { 
+  text-align: center; margin-top: 16px; font-size: 11px; color: rgba(200,216,240,.3); 
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+</style>
+</head>
+<body>
 
+<div class="container">
+  
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">MINERVA</div>
+    <div class="subtitle">CHECKOUT SEGURO</div>
+  </div>
+
+  <!-- Plan Details -->
+  <div class="card">
+    <div class="plan-badge">${selectedPlan.badge}</div>
+    <div class="plan-name">${selectedPlan.name}</div>
+    
+    ${selectedPlan.originalPrice ? `
+      <div class="original-price">$${selectedPlan.originalPrice.toLocaleString()} CLP/mes</div>
+      <div class="plan-price" style="color:#059669;">$${selectedPlan.price.toLocaleString()} <span>CLP/mes</span></div>
+      <div class="discount-text">
+        <span>💰</span> ¡Ahorras $${(selectedPlan.originalPrice - selectedPlan.price).toLocaleString()} CLP mensuales!
+      </div>
+    ` : `
+      <div class="plan-price">$${selectedPlan.price.toLocaleString()} <span>CLP/mes</span></div>
+    `}
+    
+    <div class="plan-features">${selectedPlan.features}</div>
+  </div>
+
+  <!-- Checkout Form -->
+  <div class="card">
+    <form id="checkoutForm">
+      
+      <div class="form-group">
+        <label class="form-label">📧 Email</label>
+        <input type="email" id="email" class="form-input" required placeholder="tu@empresa.com" autocomplete="email">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">👤 Nombre completo</label>
+        <input type="text" id="name" class="form-input" required placeholder="Juan Pérez" autocomplete="name">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">🎁 Código de descuento (opcional)</label>
+        <input type="text" id="discountCode" class="form-input discount-input" placeholder="PRUEBA o PRUEBA1" autocomplete="off">
+        <div class="discount-hint">Usa PRUEBA o PRUEBA1 para acceso demo ($350 CLP)</div>
+      </div>
+
+      <!-- Price Summary -->
+      <div class="price-summary">
+        <div class="price-row">
+          <span>💳 Precio base</span>
+          <span>$${selectedPlan.price.toLocaleString()} CLP</span>
+        </div>
+        <div class="price-row discount-row" id="discountRow">
+          <span>🎯 Descuento demo aplicado</span>
+          <span id="discountAmount">-</span>
+        </div>
+        <div class="price-row total-row">
+          <span>💰 Total a pagar</span>
+          <span id="finalPrice">$${selectedPlan.price.toLocaleString()} CLP</span>
+        </div>
+      </div>
+
+      <button type="submit" class="submit-btn" id="submitBtn">
+        🔒 Pagar con WebPay →
+      </button>
+
+      <div class="security-badge">
+        <span>🔐</span> Pago seguro encriptado · Procesado por Flow
+      </div>
+
+    </form>
+  </div>
+</div>
+
+<script>
+const basePrice = ${selectedPlan.price};
+const plan = '${plan}';
+
+// Discount code logic con animación
+document.getElementById('discountCode').addEventListener('input', function() {
+  const code = this.value.trim().toUpperCase();
+  const discountRow = document.getElementById('discountRow');
+  const discountAmount = document.getElementById('discountAmount');
+  const finalPrice = document.getElementById('finalPrice');
+  
+  if (code === 'PRUEBA' || code === 'PRUEBA1') {
+    const discount = basePrice - 350;
+    discountRow.style.display = 'flex';
+    discountRow.style.animation = 'fadeIn 0.3s ease';
+    discountAmount.textContent = '-$' + discount.toLocaleString() + ' CLP';
+    finalPrice.textContent = '$350 CLP';
+    finalPrice.style.color = '#059669';
+    
+    // Efecto visual en el campo
+    this.style.borderColor = '#059669';
+    this.style.background = 'rgba(5,150,105,.1)';
+  } else {
+    discountRow.style.display = 'none';
+    finalPrice.textContent = '$' + basePrice.toLocaleString() + ' CLP';
+    finalPrice.style.color = '#F0F4FF';
+    
+    // Restaurar estilo original
+    this.style.borderColor = 'rgba(0,102,204,.3)';
+    this.style.background = 'rgba(0,102,204,.06)';
+  }
+});
+
+// Form submission con validación mejorada
+document.getElementById('checkoutForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  
+  const submitBtn = document.getElementById('submitBtn');
+  const email = document.getElementById('email').value.trim();
+  const name = document.getElementById('name').value.trim();
+  const discountCode = document.getElementById('discountCode').value.trim();
+  
+  // Validaciones
+  if (!email || !name) {
+    alert('⚠️ Por favor completa todos los campos requeridos');
+    return;
+  }
+  
+  if (!email.includes('@') || !email.includes('.')) {
+    alert('⚠️ Por favor ingresa un email válido');
+    document.getElementById('email').focus();
+    return;
+  }
+  
+  // Show loading con animación
+  submitBtn.innerHTML = '⏳ Procesando pago...';
+  submitBtn.classList.add('loading');
+  
+  // Calculate final amount
+  let amount = basePrice;
+  if (discountCode.toUpperCase() === 'PRUEBA' || discountCode.toUpperCase() === 'PRUEBA1') {
+    amount = 350;
+  }
+  
+  // Simular delay para mostrar loading
+  setTimeout(() => {
+    // Redirect to Flow
+    const params = new URLSearchParams({
+      plan: plan,
+      email: email,
+      name: name,
+      amount: amount,
+      discount_code: discountCode
+    });
+    
+    window.location.href = '/api/flow-create-order?' + params.toString();
+  }, 800);
+});
+
+// Animación CSS
+const style = document.createElement('style');
+style.textContent = \`
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+\`;
+document.head.appendChild(style);
+</script>
+
+</body>
+</html>`);
+});
 // ── MARKET SCREEN ──────────────────────────────────────────────────
 function MarketScreen({ selected, onSelect, customContext, onCustomContext }:any) {
   return (
@@ -1271,13 +1328,9 @@ function DashboardScreen() {
   const [marketCustomContext, setMarketCustomContext] = useState("");
   const [modelCustomDesc,     setModelCustomDesc]     = useState("");
 
-  useEffect(() => {
-  if (!session) navigate("login");
-  else if (!profile?.profile_completed) navigate("onboarding");
-  else if (!subscription) navigate("pricing");
-}, [session, profile, subscription]);
-
-if (!session || !profile?.profile_completed || !subscription) return null;
+  if (!session) { navigate("login"); return null; }
+  if (!profile?.profile_completed) { navigate("onboarding"); return null; }
+  if (!subscription) { navigate("pricing"); return null; }
 
   const SCREENS = ["market","model","client","neural","sim"];
   const step = SCREENS.indexOf(simScreen);
