@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, createContext, useContext } from "react";
-
+ 
 // ── SUPABASE CONFIG ────────────────────────────────────────────────
 const SUPABASE_URL  = "https://tohfuokcngavbmbjsdru.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRvaGZ1b2tjbmdhdmJtYmpzZHJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNDIyMTksImV4cCI6MjA5MjYxODIxOX0.gRc-Uv4NaT18SkjFupw6krvT_Nmqt7xt4zfH235siH8";
-
+ 
 const sb = {
   h: { "Content-Type":"application/json", "apikey":SUPABASE_ANON, "Authorization":`Bearer ${SUPABASE_ANON}` },
   authH(token:string){ return {...this.h,"Authorization":`Bearer ${token}`}; },
@@ -22,6 +22,10 @@ const sb = {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/recover`, { method:"POST", headers:this.h, body:JSON.stringify({email}) });
     return r.json();
   },
+  async getUser(token:string) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers:this.authH(token) });
+    return r.json();
+  },
   async getProfile(token:string, userId:string) {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`, { headers:this.authH(token) });
     const d = await r.json(); return Array.isArray(d)?d[0]:null;
@@ -33,14 +37,15 @@ const sb = {
       body:JSON.stringify({id:userId,...data})
     });
     return r.json();
-  },async updatePassword(token: string, newPassword: string) {
-     const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-       method: "PUT",
-       headers: this.authH(token),
-       body: JSON.stringify({ password: newPassword })
-     });
-     return r.json();
-   },
+  },
+  async updatePassword(token:string, newPassword:string) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method:"PUT",
+      headers:this.authH(token),
+      body:JSON.stringify({password:newPassword})
+    });
+    return r.json();
+  },
   async getSubscription(token:string, userId:string) {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}&status=eq.active&select=*&limit=1`, { headers:this.authH(token) });
     const d = await r.json(); return Array.isArray(d)?d[0]:null;
@@ -49,7 +54,7 @@ const sb = {
     return this.upsertProfile(token, userId, profile);
   },
 };
-
+ 
 // ── PALETTE ────────────────────────────────────────────────────────
 const C:any = {
   darkBg:"#040D1A", darkSurface:"#0A1628", darkBorder:"#1B3A6B",
@@ -59,7 +64,7 @@ const C:any = {
   blueMain:"#0066CC", blueLight:"#2997FF", error:"#DC2626", success:"#059669",
   gold:"#F0B429", green:"#2ECC71", red:"#E05252", orange:"#E8843A", purple:"#9B59B6",
 };
-
+ 
 const NODE_TYPES:any = {
   decision:  {color:C.gold,   label:"DECISOR",    sz:28},
   champion:  {color:C.green,  label:"CAMPEÓN",    sz:24},
@@ -67,11 +72,11 @@ const NODE_TYPES:any = {
   validator: {color:C.orange, label:"VALIDADOR",  sz:20},
   passive:   {color:C.textDim,label:"PASIVO",     sz:15},
 };
-
+ 
 // ── DATA ───────────────────────────────────────────────────────────
 const COUNTRIES = ["Chile","Argentina","Colombia","México","Perú","Brasil","Uruguay","Ecuador","Bolivia","Paraguay","Venezuela","España","Panamá","Costa Rica","Guatemala","Honduras","El Salvador","Nicaragua","Rep. Dominicana","Cuba","Estados Unidos","Canadá","Otro"];
 const INDUSTRIES = ["Alimentaria & Bebidas","Minería & Metalurgia","Farmacéutica & Laboratorio","Hotelería & Hospitalidad","Manufactura Industrial","Petroquímica & Energía","Papel & Celulosa","Salud & Clínicas","Construcción & Contratistas","Facility Services","Retail & Distribución","Tecnología & Software","Agroindustria","Logística & Transporte","Otro"];
-
+ 
 const MARKETS:any = {
   alimentaria:{ id:"alimentaria", name:"Alimentaria & Bebidas", icon:"🥛", accent:"#E8A838", shortDesc:"Lácteos · Cárnicos · Snacks · Bebidas", context:"planta de producción alimentaria con procesos CIP/COP, normativa de inocuidad y alta rotación de líneas productivas", keywords:["inocuidad alimentaria","CIP/COP","downtime de línea","mermas de proceso","auditorías sanitarias"] },
   mineria:{ id:"mineria", name:"Minería & Metalurgia", icon:"⛏️", accent:"#C47A3A", shortDesc:"Cobre · Litio · Hierro · Flotación", context:"operación minera con procesos de flotación o lixiviación, alta presión en OPEX y continuidad operacional crítica", keywords:["recuperación metalúrgica","OPEX minero","continuidad operacional","agua de proceso","reactivos"] },
@@ -85,7 +90,7 @@ const MARKETS:any = {
   retail:{ id:"retail", name:"Retail & Logística", icon:"🛒", accent:"#E84393", shortDesc:"Supermercados · Tiendas · Distribuidoras · Logística", context:"operación retail o logística con alta rotación de personal, múltiples puntos de venta o bodegas y presión constante en costos operacionales", keywords:["costo por punto de venta","rotación de inventario","logística last mile","gestión de bodegas","shrinkage"] },
   otro:{ id:"otro", name:"Otro", icon:"✳️", accent:"#636E72", shortDesc:"Describe tu propio mercado", context:"", keywords:[] },
 };
-
+ 
 const MODELS:any = {
   transaccional:{
     id:"transaccional", name:"Venta Transaccional", icon:"📦",
@@ -172,7 +177,7 @@ const MODELS:any = {
     ],
   },
 };
-
+ 
 // ── API CALL ───────────────────────────────────────────────────────
 async function callClaude(system: string, user: string): Promise<string> {
   try {
@@ -188,12 +193,12 @@ async function callClaude(system: string, user: string): Promise<string> {
     return "Error al conectar con el motor de IA.";
   }
 }
-
+ 
 // ── HELPERS ────────────────────────────────────────────────────────
 function Tag({ children, color, small }:any) {
   return <span style={{ background:color+"18", border:`1px solid ${color}40`, color, fontSize:small?9:10, padding:small?"2px 8px":"3px 11px", borderRadius:20, fontFamily:"'JetBrains Mono',monospace", fontWeight:700, letterSpacing:".08em", textTransform:"uppercase" as const, whiteSpace:"nowrap" as const }}>{children}</span>;
 }
-
+ 
 function ContextBar({ market, model, offerName }:any) {
   if (!market) return null;
   return (
@@ -205,7 +210,7 @@ function ContextBar({ market, model, offerName }:any) {
     </div>
   );
 }
-
+ 
 // ── APP HEADER ─────────────────────────────────────────────────────
 function AppHeader({ step, onNav, user, onSignOut }:any) {
   const NAV = ["Mercado","Modelo","Cliente","Mapa Neural","Simulación"];
@@ -233,15 +238,15 @@ function AppHeader({ step, onNav, user, onSignOut }:any) {
     </div>
   );
 }
-
+ 
 // ── BG NODES ───────────────────────────────────────────────────────
 const BGN=[{x:12,y:18,r:3,d:0},{x:35,y:8,r:2,d:.4},{x:58,y:22,r:4,d:.8},{x:78,y:12,r:2,d:.2},{x:88,y:35,r:3,d:1.1},{x:92,y:60,r:2,d:.6},{x:70,y:80,r:3,d:.9},{x:45,y:92,r:2,d:.3},{x:20,y:78,r:4,d:1.4},{x:8,y:55,r:2,d:.7},{x:25,y:42,r:3,d:1.0},{x:62,y:55,r:2,d:.5},{x:48,y:35,r:5,d:.1},{x:72,y:45,r:2,d:1.3},{x:35,y:62,r:3,d:.8}];
 const BGE=[[0,1],[1,2],[2,3],[3,4],[4,5],[5,0],[0,12],[1,12],[12,11],[11,13],[13,2],[4,9],[9,8],[8,7],[7,6],[6,13],[5,10],[10,9],[10,14],[14,11],[14,3]];
 const HEX=[{cx:50,cy:20},{cx:80,cy:36},{cx:80,cy:64},{cx:50,cy:80},{cx:20,cy:64},{cx:20,cy:36}];
-
+ 
 // ── AUTH CONTEXT ───────────────────────────────────────────────────
-type Route = "login" | "onboarding" | "pricing" | "dashboard";
-
+type Route = "login" | "new-password" | "onboarding" | "pricing" | "dashboard";
+ 
 interface AuthState {
   session: any;
   profile: any;
@@ -257,14 +262,132 @@ const AuthCtx = createContext<AuthState>({
   route:"login", navigate:()=>{}, refresh:async()=>{}, signOut:async()=>{},
 });
 const useAuth = () => useContext(AuthCtx);
-
+ 
 function resolveRoute(session:any, profile:any, subscription:any): Route {
   if (!session) return "login";
   if (!profile?.profile_completed) return "onboarding";
   if (!subscription) return "pricing";
   return "dashboard";
 }
-
+ 
+// ── AUTH HEADER ────────────────────────────────────────────────────
+function AuthHeader({ step, theme = "light" }: { step?: number; theme?: "light" | "dark" }) {
+  const { session, profile, signOut } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<any>(null);
+ 
+  useEffect(() => {
+    const handler = (e: any) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+ 
+  const isDark    = theme === "dark";
+  const headerBg  = isDark ? "rgba(10,22,40,0.7)" : "rgba(255,255,255,0.94)";
+  const borderCol = isDark ? C.darkBorder : C.lightBorder;
+  const brandCol  = isDark ? C.textLight  : C.textDark;
+  const subBrand  = isDark ? C.nodeCyan   : C.blueMain;
+  const stepDim   = isDark ? C.darkBorder : C.lightBorder2;
+  const stepText  = isDark ? "rgba(200,216,240,.5)" : C.textHint;
+  const initials  = session?.user?.email?.[0]?.toUpperCase() || "?";
+ 
+  return (
+    <div style={{
+      position:"sticky", top:0, zIndex:200,
+      background: headerBg,
+      backdropFilter:"saturate(180%) blur(20px)",
+      WebkitBackdropFilter:"saturate(180%) blur(20px)",
+      borderBottom:`1px solid ${borderCol}`,
+      padding:"0 28px", height:54,
+      display:"flex", alignItems:"center", gap:14
+    }}>
+      <div style={{display:"flex",alignItems:"center",gap:9,flexShrink:0}}>
+        <div style={{width:30,height:30,borderRadius:8,background:C.darkBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:C.textLight,fontWeight:800}}>M</div>
+        <div>
+          <div style={{fontSize:13,fontWeight:800,color:brandCol,letterSpacing:"-.02em",lineHeight:1.1}}>MINERVA</div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:8,color:subBrand,letterSpacing:".1em"}}>DEAL.ENGINE</div>
+        </div>
+      </div>
+ 
+      {step !== undefined && (
+        <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:24,flexWrap:"wrap" as const}}>
+          {["Cuenta","Perfil","Plan","Dashboard"].map((s,i)=>{
+            const done = step > i, active = step === i;
+            return (
+              <div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{
+                  width:22,height:22,borderRadius:"50%",
+                  background: done ? C.success : active ? C.blueMain : stepDim,
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:9,fontWeight:700,
+                  color: (done || active) ? "#fff" : stepText,
+                  fontFamily:"'JetBrains Mono',monospace"
+                }}>{done ? "✓" : i+1}</div>
+                <span style={{fontSize:11,fontWeight: active ? 700 : 400,color: active ? brandCol : stepText}}>{s}</span>
+                {i<3 && <div style={{width:14,height:1,background:borderCol,marginLeft:2}}/>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+ 
+      <div ref={menuRef} style={{position:"relative",marginLeft:"auto"}}>
+        <button onClick={()=>setMenuOpen(o=>!o)} style={{
+          display:"flex",alignItems:"center",gap:8,padding:"4px 10px 4px 4px",
+          background: menuOpen ? (isDark ? "rgba(255,255,255,.06)" : C.lightBg) : "transparent",
+          border:`1px solid ${menuOpen ? borderCol : "transparent"}`,
+          borderRadius:24, cursor:"pointer", fontFamily:"inherit", transition:"all .15s"
+        }}>
+          <div style={{
+            width:28,height:28,borderRadius:"50%",
+            background:C.blueMain+"22",border:`1px solid ${C.blueMain}55`,
+            display:"flex",alignItems:"center",justifyContent:"center",
+            fontSize:12,color:C.blueMain,fontWeight:700
+          }}>{initials}</div>
+          <span style={{fontSize:10,color:stepText,fontFamily:"'JetBrains Mono',monospace"}}>▾</span>
+        </button>
+ 
+        {menuOpen && (
+          <div style={{
+            position:"absolute", top:"calc(100% + 6px)", right:0,
+            background:C.lightCard, border:`1px solid ${C.lightBorder}`,
+            borderRadius:12, padding:"6px 0", minWidth:260,
+            boxShadow:"0 10px 30px rgba(0,0,0,.14)", zIndex:300
+          }}>
+            <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.lightBorder2}`}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.textDark,marginBottom:3,wordBreak:"break-all" as const}}>
+                {session?.user?.email || "—"}
+              </div>
+              {profile?.empresa && (
+                <div style={{fontSize:10,color:C.textGray,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".04em"}}>
+                  {profile.empresa}{profile.pais ? ` · ${profile.pais}` : ""}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={async()=>{ setMenuOpen(false); await signOut(); }}
+              style={{
+                width:"100%", padding:"11px 16px",
+                display:"flex",alignItems:"center",gap:10,
+                background:"transparent", border:"none", textAlign:"left" as const,
+                cursor:"pointer", fontFamily:"inherit",
+                fontSize:12, color:C.error, fontWeight:600,
+                transition:"background .12s"
+              }}
+              onMouseEnter={e=>(e.currentTarget as any).style.background=C.error+"08"}
+              onMouseLeave={e=>(e.currentTarget as any).style.background="transparent"}
+            >
+              <span style={{fontSize:13}}>↗</span> Cerrar sesión
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+ 
 // ── AUTH GATE ──────────────────────────────────────────────────────
 function AuthGate() {
   const [session,      setSession]      = useState<any>(null);
@@ -272,7 +395,8 @@ function AuthGate() {
   const [subscription, setSubscription] = useState<any>(null);
   const [loading,      setLoading]      = useState(true);
   const [route,        setRoute]        = useState<Route>("login");
-
+  const [recoveryToken, setRecoveryToken] = useState<string|null>(null);
+ 
   const load = async (sess:any) => {
     if (!sess) {
       setProfile(null); setSubscription(null);
@@ -291,24 +415,63 @@ function AuthGate() {
     }
     setLoading(false);
   };
-
+ 
   useEffect(() => {
-    const stored = localStorage.getItem("minerva_session");
-    if (stored) {
-      try { const sess = JSON.parse(stored); setSession(sess); load(sess); }
-      catch { setLoading(false); }
-    } else { setLoading(false); }
+    const initAuth = async () => {
+      // Detectar callback de confirmación de email o reset de password (hash en URL)
+      const hash = window.location.hash;
+      if (hash && hash.includes("access_token")) {
+        const params = new URLSearchParams(hash.substring(1));
+        const access_token  = params.get("access_token");
+        const refresh_token = params.get("refresh_token");
+        const type          = params.get("type");
+        // Limpiar el hash de inmediato para que no quede en history/refresh
+        window.history.replaceState({}, document.title, window.location.pathname);
+ 
+        // Si viene de "olvidé mi contraseña", NO loguear: ir a NewPasswordScreen
+        if (type === "recovery" && access_token) {
+          setRecoveryToken(access_token);
+          setRoute("new-password");
+          setLoading(false);
+          return;
+        }
+ 
+        // Confirmación normal de email
+        if (access_token) {
+          try {
+            const user = await sb.getUser(access_token);
+            if (user && user.id) {
+              const sess = { access_token, refresh_token, user };
+              localStorage.setItem("minerva_session", JSON.stringify(sess));
+              setSession(sess);
+              await load(sess);
+              return;
+            }
+          } catch {}
+        }
+      }
+ 
+      // Leer sesión guardada
+      const stored = localStorage.getItem("minerva_session");
+      if (!stored) { setLoading(false); return; }
+      try {
+        const sess = JSON.parse(stored);
+        setSession(sess);
+        await load(sess);
+      } catch { setLoading(false); }
+    };
+    initAuth();
   }, []);
-
+ 
   const refresh = async () => { setLoading(true); await load(session); };
-
+ 
   const signOut = async () => {
     if (session?.access_token) { try { await sb.signOut(session.access_token); } catch {} }
     localStorage.removeItem("minerva_session");
     setSession(null); setProfile(null); setSubscription(null);
     setRoute("login"); setLoading(false);
   };
-
+ 
   const updateSession = (sess:any) => {
     setSession(sess);
     if (sess) localStorage.setItem("minerva_session", JSON.stringify(sess));
@@ -316,9 +479,9 @@ function AuthGate() {
     setLoading(true);
     load(sess);
   };
-
+ 
   const navigate = (r: Route) => setRoute(r);
-
+ 
   if (loading) return (
     <div style={{minHeight:"100vh",background:C.darkBg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
       <div style={{textAlign:"center"}}>
@@ -328,17 +491,18 @@ function AuthGate() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
-
+ 
   return (
     <AuthCtx.Provider value={{session,profile,subscription,loading,route,navigate,refresh,signOut}}>
       {route==="login"      && <LoginScreen onAuth={updateSession}/>}
+      {route==="new-password" && <NewPasswordScreen recoveryToken={recoveryToken} onSuccess={updateSession}/>}
       {route==="onboarding" && <OnboardingRoute/>}
       {route==="pricing"    && <PricingRoute/>}
       {route==="dashboard"  && <DashboardScreen/>}
     </AuthCtx.Provider>
   );
 }
-
+ 
 // ── LOGIN SCREEN ───────────────────────────────────────────────────
 function LoginScreen({ onAuth }:any) {
   const [mode, setMode] = useState("login");
@@ -347,7 +511,7 @@ function LoginScreen({ onAuth }:any) {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<any>(null);
   const inp = { width:"100%", padding:"12px 16px", borderRadius:10, fontSize:14, border:`1.5px solid ${C.lightBorder}`, background:C.lightCard, color:C.textDark, fontFamily:"inherit", outline:"none", boxSizing:"border-box" as const, transition:"border-color .15s" };
-
+ 
   const handleSubmit = async () => {
     setMsg(null);
     if (!email) { setMsg({type:"error",text:"Ingresa tu correo electrónico"}); return; }
@@ -371,7 +535,7 @@ function LoginScreen({ onAuth }:any) {
     } catch { setMsg({type:"error",text:"Error de conexión"}); }
     setLoading(false);
   };
-
+ 
   return (
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');@keyframes mFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}*{box-sizing:border-box}input:focus{outline:none}`}</style>
@@ -426,15 +590,158 @@ function LoginScreen({ onAuth }:any) {
     </div>
   );
 }
-
+ 
+// ── NEW PASSWORD SCREEN ────────────────────────────────────────────
+function NewPasswordScreen({ recoveryToken, onSuccess }: any) {
+  const [pwd, setPwd]         = useState("");
+  const [pwd2, setPwd2]       = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg]         = useState<any>(null);
+ 
+  const inp = {
+    width:"100%", padding:"12px 16px", borderRadius:10, fontSize:14,
+    border:`1.5px solid ${C.lightBorder}`, background:C.lightCard, color:C.textDark,
+    fontFamily:"inherit", outline:"none", boxSizing:"border-box" as const,
+    transition:"border-color .15s"
+  };
+ 
+  const strength = (() => {
+    if (!pwd) return null;
+    let score = 0;
+    if (pwd.length >= 8)          score++;
+    if (/[A-Z]/.test(pwd))        score++;
+    if (/[0-9]/.test(pwd))        score++;
+    if (/[^A-Za-z0-9]/.test(pwd)) score++;
+    if (score <= 1)  return { label:"Débil",  color:C.error,   pct:25 };
+    if (score === 2) return { label:"Media",  color:C.gold,    pct:55 };
+    if (score === 3) return { label:"Buena",  color:"#0EA5E9", pct:80 };
+    return                  { label:"Fuerte", color:C.success, pct:100 };
+  })();
+ 
+  const handleSubmit = async () => {
+    setMsg(null);
+    if (!recoveryToken) { setMsg({type:"error",text:"El enlace de recuperación expiró. Solicita uno nuevo desde el login."}); return; }
+    if (pwd.length < 6) { setMsg({type:"error",text:"La contraseña debe tener al menos 6 caracteres"}); return; }
+    if (pwd !== pwd2)   { setMsg({type:"error",text:"Las contraseñas no coinciden"}); return; }
+    setLoading(true);
+    try {
+      const result = await sb.updatePassword(recoveryToken, pwd);
+      const ok = result?.id || result?.email;
+      if (!ok) {
+        setMsg({type:"error", text: result?.msg || result?.error_description || result?.message || "No pudimos actualizar la contraseña"});
+        setLoading(false);
+        return;
+      }
+      const sess = { access_token: recoveryToken, refresh_token: null, user: result };
+      onSuccess(sess);
+    } catch {
+      setMsg({type:"error",text:"Error de conexión. Verifica tu internet e intenta nuevamente."});
+      setLoading(false);
+    }
+  };
+ 
+  const handleCancel = () => {
+    localStorage.removeItem("minerva_session");
+    window.location.href = window.location.pathname;
+  };
+ 
+  return (
+    <div style={{minHeight:"100vh",background:C.lightBg,display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 24px",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');*{box-sizing:border-box}@keyframes mFadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
+      <div style={{width:"100%",maxWidth:420}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:28,justifyContent:"center"}}>
+          <div style={{width:36,height:36,borderRadius:9,background:C.darkBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:C.textLight,fontWeight:800}}>M</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:800,color:C.textDark}}>MINERVA</div>
+            <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:8,color:C.blueMain,letterSpacing:".1em"}}>DEAL.ENGINE</div>
+          </div>
+        </div>
+ 
+        <div style={{background:C.lightCard,borderRadius:20,padding:"36px 32px",border:`1px solid ${C.lightBorder}`,boxShadow:"0 4px 40px rgba(0,0,0,.06)",animation:"mFadeUp .35s ease"}}>
+          <div style={{fontSize:22,fontWeight:800,color:C.textDark,letterSpacing:"-.03em",marginBottom:6}}>Crear nueva contraseña</div>
+          <div style={{fontSize:13,color:C.textGray,lineHeight:1.6,marginBottom:24}}>Estás a un paso de recuperar tu cuenta. Mínimo 6 caracteres.</div>
+ 
+          {msg && (
+            <div style={{
+              padding:"10px 14px",borderRadius:8,marginBottom:16,fontSize:12,
+              background: msg.type==="error" ? C.error+"10" : C.success+"10",
+              border:`1px solid ${msg.type==="error" ? C.error+"30" : C.success+"30"}`,
+              color: msg.type==="error" ? C.error : C.success
+            }}>{msg.text}</div>
+          )}
+ 
+          <div style={{marginBottom:14}}>
+            <label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>NUEVA CONTRASEÑA</label>
+            <div style={{position:"relative"}}>
+              <input
+                type={showPwd ? "text" : "password"}
+                value={pwd}
+                onChange={e=>setPwd(e.target.value)}
+                placeholder="Mínimo 6 caracteres"
+                style={{...inp,paddingRight:64}}
+                onFocus={e=>(e.target.style.borderColor=C.blueMain)}
+                onBlur={e=>(e.target.style.borderColor=C.lightBorder)}
+                onKeyDown={e=>e.key==="Enter"&&handleSubmit()}
+              />
+              <button
+                onClick={()=>setShowPwd(s=>!s)}
+                type="button"
+                style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.textHint,fontSize:10,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em",padding:6}}
+              >{showPwd ? "OCULTAR" : "VER"}</button>
+            </div>
+            {strength && (
+              <div style={{marginTop:8,display:"flex",alignItems:"center",gap:10}}>
+                <div style={{flex:1,height:4,background:C.lightBorder2,borderRadius:20,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${strength.pct}%`,background:strength.color,borderRadius:20,transition:"width .25s"}}/>
+                </div>
+                <span style={{fontSize:10,color:strength.color,fontFamily:"'JetBrains Mono',monospace",fontWeight:700,minWidth:48,textAlign:"right" as const}}>{strength.label}</span>
+              </div>
+            )}
+          </div>
+ 
+          <div style={{marginBottom:22}}>
+            <label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>CONFIRMAR CONTRASEÑA</label>
+            <input
+              type={showPwd ? "text" : "password"}
+              value={pwd2}
+              onChange={e=>setPwd2(e.target.value)}
+              placeholder="Repite la contraseña"
+              style={inp}
+              onFocus={e=>(e.target.style.borderColor=C.blueMain)}
+              onBlur={e=>(e.target.style.borderColor=C.lightBorder)}
+              onKeyDown={e=>e.key==="Enter"&&handleSubmit()}
+            />
+          </div>
+ 
+          <button onClick={handleSubmit} disabled={loading} style={{
+            width:"100%",padding:"14px",
+            background: loading ? C.lightBorder : C.textDark,
+            border:"none",borderRadius:10,color:"#fff",
+            fontSize:14,fontWeight:700,
+            cursor: loading ? "not-allowed" : "pointer",
+            fontFamily:"inherit",marginBottom:14
+          }}>
+            {loading ? "Guardando..." : "Guardar y entrar →"}
+          </button>
+ 
+          <div style={{textAlign:"center" as const}}>
+            <button onClick={handleCancel} style={{background:"none",border:"none",color:C.textHint,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>← Volver al login</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+ 
 // ── ONBOARDING ROUTE ───────────────────────────────────────────────
 function OnboardingRoute() {
   const { session, subscription, refresh, navigate } = useAuth();
   const [empresa, setEmpresa] = useState(""); const [pais, setPais] = useState(""); const [giro, setGiro] = useState(""); const [loading, setLoading] = useState(false); const [err, setErr] = useState("");
   const sel = { width:"100%", padding:"11px 14px", borderRadius:10, fontSize:13, border:`1.5px solid ${C.lightBorder}`, background:C.lightCard, color:C.textDark, fontFamily:"inherit", outline:"none", boxSizing:"border-box" as const };
-
+ 
   if (!session) { navigate("login"); return null; }
-
+ 
   const handleSave = async () => {
     if (!empresa.trim()) { setErr("Ingresa el nombre de tu empresa"); return; }
     if (!pais) { setErr("Selecciona tu país"); return; }
@@ -449,311 +756,112 @@ function OnboardingRoute() {
     } catch { setErr("Error al guardar. Intenta nuevamente."); }
     setLoading(false);
   };
-
+ 
   return (
-    <div style={{minHeight:"100vh",background:C.lightBg,display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 24px",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
+    <div style={{minHeight:"100vh",background:C.lightBg,fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');*{box-sizing:border-box}`}</style>
-      <div style={{width:"100%",maxWidth:460}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:32,justifyContent:"center"}}>
-          <div style={{width:36,height:36,borderRadius:9,background:C.darkBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🧠</div>
-          <div><div style={{fontSize:13,fontWeight:800,color:C.textDark}}>MINERVA</div><div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:8,color:C.blueMain,letterSpacing:".1em"}}>DEAL.ENGINE</div></div>
-        </div>
-
-        {/* Progress steps */}
-        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:32,justifyContent:"center"}}>
-          {["Cuenta","Perfil","Plan","Dashboard"].map((s,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <div style={{width:24,height:24,borderRadius:"50%",background:i===0?C.success:i===1?C.blueMain:C.lightBorder2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:i<=1?"#fff":C.textHint,fontFamily:"'JetBrains Mono',monospace"}}>{i===0?"✓":i+1}</div>
-                <span style={{fontSize:11,fontWeight:i===1?700:400,color:i===1?C.textDark:C.textHint}}>{s}</span>
-              </div>
-              {i<3&&<div style={{width:20,height:1,background:C.lightBorder,marginLeft:2}}/>}
-            </div>
-          ))}
-        </div>
-
-        <div style={{background:C.lightCard,borderRadius:20,padding:"40px 36px",border:`1px solid ${C.lightBorder}`,boxShadow:"0 4px 40px rgba(0,0,0,.06)"}}>
-          <div style={{fontSize:22,fontWeight:800,color:C.textDark,letterSpacing:"-.03em",marginBottom:6}}>Cuéntanos sobre<br/>tu empresa</div>
-          <div style={{fontSize:13,color:C.textGray,lineHeight:1.6,marginBottom:24}}>3 datos que personalizan todos los agentes de tus simulaciones.</div>
-          {err&&<div style={{padding:"9px 13px",borderRadius:8,marginBottom:14,fontSize:12,background:C.error+"10",border:`1px solid ${C.error}30`,color:C.error}}>{err}</div>}
-          <div style={{marginBottom:12}}><label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>NOMBRE DE TU EMPRESA</label><input value={empresa} onChange={e=>setEmpresa(e.target.value)} placeholder="Ej: Soluciones Industriales..." style={{...sel,appearance:"none" as any}} onFocus={e=>(e.target.style.borderColor=C.blueMain)} onBlur={e=>(e.target.style.borderColor=C.lightBorder)}/></div>
-          <div style={{marginBottom:12}}><label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>PAÍS DE OPERACIÓN</label><select value={pais} onChange={e=>setPais(e.target.value)} style={sel}><option value="">Selecciona un país...</option>{COUNTRIES.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
-          <div style={{marginBottom:28}}><label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>GIRO DE TU EMPRESA</label><select value={giro} onChange={e=>setGiro(e.target.value)} style={sel}><option value="">Selecciona un giro...</option>{INDUSTRIES.map(g=><option key={g} value={g}>{g}</option>)}</select></div>
-          <button onClick={handleSave} disabled={loading} style={{width:"100%",padding:"14px",background:C.textDark,border:"none",borderRadius:10,color:"#fff",fontSize:14,fontWeight:700,cursor:loading?"not-allowed":"pointer",fontFamily:"inherit",opacity:loading?.7:1}}>
-            {loading?"Guardando...":"Continuar → Elegir plan"}
-          </button>
+      <AuthHeader step={1} theme="light"/>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 24px",minHeight:"calc(100vh - 54px)"}}>
+        <div style={{width:"100%",maxWidth:460}}>
+          <div style={{background:C.lightCard,borderRadius:20,padding:"40px 36px",border:`1px solid ${C.lightBorder}`,boxShadow:"0 4px 40px rgba(0,0,0,.06)"}}>
+            <div style={{fontSize:22,fontWeight:800,color:C.textDark,letterSpacing:"-.03em",marginBottom:6}}>Cuéntanos sobre<br/>tu empresa</div>
+            <div style={{fontSize:13,color:C.textGray,lineHeight:1.6,marginBottom:24}}>3 datos que personalizan todos los agentes de tus simulaciones.</div>
+            {err&&<div style={{padding:"9px 13px",borderRadius:8,marginBottom:14,fontSize:12,background:C.error+"10",border:`1px solid ${C.error}30`,color:C.error}}>{err}</div>}
+            <div style={{marginBottom:12}}><label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>NOMBRE DE TU EMPRESA</label><input value={empresa} onChange={e=>setEmpresa(e.target.value)} placeholder="Ej: Soluciones Industriales..." style={{...sel,appearance:"none" as any}} onFocus={e=>(e.target.style.borderColor=C.blueMain)} onBlur={e=>(e.target.style.borderColor=C.lightBorder)}/></div>
+            <div style={{marginBottom:12}}><label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>PAÍS DE OPERACIÓN</label><select value={pais} onChange={e=>setPais(e.target.value)} style={sel}><option value="">Selecciona un país...</option>{COUNTRIES.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+            <div style={{marginBottom:28}}><label style={{fontSize:11,color:C.textGray,display:"block",marginBottom:5,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>GIRO DE TU EMPRESA</label><select value={giro} onChange={e=>setGiro(e.target.value)} style={sel}><option value="">Selecciona un giro...</option>{INDUSTRIES.map(g=><option key={g} value={g}>{g}</option>)}</select></div>
+            <button onClick={handleSave} disabled={loading} style={{width:"100%",padding:"14px",background:C.textDark,border:"none",borderRadius:10,color:"#fff",fontSize:14,fontWeight:700,cursor:loading?"not-allowed":"pointer",fontFamily:"inherit",opacity:loading?.7:1}}>
+              {loading?"Guardando...":"Continuar → Elegir plan"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-// ===== CHECKOUT ROUTE COMPLETO =====
-app.get('/checkout', (req, res) => {
-  const { plan } = req.query;
-  
-  // Validar plan
-  if (!plan || !['salesman', 'pyme'].includes(plan)) {
-    return res.redirect('https://minervaai-production-9c2d.up.railway.app');
-  }
-
-  // Configuración de planes
-  const planDetails = {
-    salesman: { 
-      name: 'Plan Salesman', 
-      price: 30000,
-      originalPrice: 60000,
-      discount: 50,
-      features: '1 usuario, 20 simulaciones/mes, Dashboard personal',
-      badge: '🔥 OFERTA 50% OFF',
-      popular: false
+ 
+// ── PRICING ROUTE ──────────────────────────────────────────────────
+function PricingRoute() {
+  const { session, profile, navigate } = useAuth();
+ 
+  useEffect(() => {
+    if (!session) navigate("login");
+    else if (!profile?.profile_completed) navigate("onboarding");
+  }, [session, profile]);
+ 
+  if (!session || !profile?.profile_completed) return null;
+ 
+  const plans = [
+    {
+      id:"salesman", name:"Salesman", badge:"INDIVIDUAL",
+      price:"$30.000", currency:"CLP/mes",
+      tagline:"Brilla en tu organización con inteligencia estratégica",
+      features:["1 usuario","20 simulaciones al mes","11 mercados verticales","3 modelos comerciales","Informe ejecutivo PDF","Dashboard personal"],
+      cta:"Contratar Salesman →", featured:false,
     },
-    pyme: { 
-      name: 'Plan Pyme Enterprise', 
-      price: 300000, 
-      features: '5 usuarios, 100 simulaciones/mes, Dashboard empresa + vendedor',
-      badge: '⭐ MÁS POPULAR',
-      popular: true
-    }
-  };
-
-  const selectedPlan = planDetails[plan];
-  
-  res.send(`<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Checkout · ${selectedPlan.name} · MINERVA</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #040D1A; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #F0F4FF; min-height: 100vh; }
-.container { max-width: 500px; margin: 40px auto; padding: 20px; }
-.header { text-align: center; margin-bottom: 32px; }
-.brand { font-size: 22px; font-weight: 800; margin-bottom: 4px; letter-spacing: -.02em; }
-.subtitle { font-size: 10px; color: #00A8FF; letter-spacing: .2em; font-family: monospace; }
-.card { background: #0A1628; border: 1px solid #1B3A6B; border-radius: 16px; padding: 24px; margin-bottom: 24px; position: relative; }
-.plan-badge { 
-  position: absolute; top: -12px; left: 50%; transform: translateX(-50%); 
-  background: ${selectedPlan.popular ? '#0066CC' : '#ff6b35'}; 
-  color: #fff; font-size: 10px; font-weight: 700; 
-  padding: 4px 12px; border-radius: 20px; 
-  letter-spacing: .05em; white-space: nowrap;
-}
-.plan-name { font-size: 18px; font-weight: 700; margin: 16px 0 8px; }
-.original-price { 
-  font-size: 16px; color: #ff6b6b; text-decoration: line-through; 
-  margin-bottom: 4px; opacity: .8;
-}
-.plan-price { font-size: 32px; font-weight: 800; margin-bottom: 6px; }
-.plan-price span { font-size: 16px; opacity: .6; font-weight: 400; }
-.discount-text { 
-  font-size: 13px; color: #059669; font-weight: 600; 
-  margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
-}
-.plan-features { font-size: 14px; color: #C8D8F0; line-height: 1.5; }
-.form-group { margin-bottom: 18px; }
-.form-label { display: block; margin-bottom: 8px; font-size: 13px; color: #C8D8F0; font-weight: 600; }
-.form-input { 
-  width: 100%; padding: 14px; border: 1px solid #1B3A6B; border-radius: 10px; 
-  background: #040D1A; color: #F0F4FF; font-size: 14px; transition: border-color .2s;
-}
-.form-input:focus { outline: none; border-color: #0066CC; box-shadow: 0 0 0 3px rgba(0,102,204,.1); }
-.discount-input { background: rgba(0,102,204,.06); border-color: rgba(0,102,204,.3); }
-.discount-hint { font-size: 11px; color: rgba(200,216,240,.4); margin-top: 4px; }
-.price-summary { 
-  border-top: 1px solid #1B3A6B; padding-top: 20px; margin-bottom: 24px; 
-  background: rgba(0,102,204,.03); border-radius: 8px; padding: 16px;
-}
-.price-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 14px; }
-.discount-row { color: #059669; display: none; font-weight: 600; }
-.total-row { 
-  font-size: 20px; font-weight: 800; color: #F0F4FF; 
-  border-top: 1px solid rgba(255,255,255,.1); padding-top: 12px; margin-top: 12px;
-}
-.submit-btn { 
-  width: 100%; padding: 18px; background: linear-gradient(135deg, #0066CC 0%, #0052A3 100%); 
-  color: #fff; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; 
-  cursor: pointer; transition: all .3s; box-shadow: 0 4px 15px rgba(0,102,204,.3);
-}
-.submit-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,102,204,.4); }
-.submit-btn:active { transform: translateY(0); }
-.loading { opacity: .7; pointer-events: none; cursor: not-allowed; }
-.security-badge { 
-  text-align: center; margin-top: 16px; font-size: 11px; color: rgba(200,216,240,.3); 
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-}
-</style>
-</head>
-<body>
-
-<div class="container">
-  
-  <!-- Header -->
-  <div class="header">
-    <div class="brand">MINERVA</div>
-    <div class="subtitle">CHECKOUT SEGURO</div>
-  </div>
-
-  <!-- Plan Details -->
-  <div class="card">
-    <div class="plan-badge">${selectedPlan.badge}</div>
-    <div class="plan-name">${selectedPlan.name}</div>
-    
-    ${selectedPlan.originalPrice ? `
-      <div class="original-price">$${selectedPlan.originalPrice.toLocaleString()} CLP/mes</div>
-      <div class="plan-price" style="color:#059669;">$${selectedPlan.price.toLocaleString()} <span>CLP/mes</span></div>
-      <div class="discount-text">
-        <span>💰</span> ¡Ahorras $${(selectedPlan.originalPrice - selectedPlan.price).toLocaleString()} CLP mensuales!
-      </div>
-    ` : `
-      <div class="plan-price">$${selectedPlan.price.toLocaleString()} <span>CLP/mes</span></div>
-    `}
-    
-    <div class="plan-features">${selectedPlan.features}</div>
-  </div>
-
-  <!-- Checkout Form -->
-  <div class="card">
-    <form id="checkoutForm">
-      
-      <div class="form-group">
-        <label class="form-label">📧 Email</label>
-        <input type="email" id="email" class="form-input" required placeholder="tu@empresa.com" autocomplete="email">
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">👤 Nombre completo</label>
-        <input type="text" id="name" class="form-input" required placeholder="Juan Pérez" autocomplete="name">
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">🎁 Código de descuento (opcional)</label>
-        <input type="text" id="discountCode" class="form-input discount-input" placeholder="PRUEBA o PRUEBA1" autocomplete="off">
-        <div class="discount-hint">Usa PRUEBA o PRUEBA1 para acceso demo ($350 CLP)</div>
-      </div>
-
-      <!-- Price Summary -->
-      <div class="price-summary">
-        <div class="price-row">
-          <span>💳 Precio base</span>
-          <span>$${selectedPlan.price.toLocaleString()} CLP</span>
-        </div>
-        <div class="price-row discount-row" id="discountRow">
-          <span>🎯 Descuento demo aplicado</span>
-          <span id="discountAmount">-</span>
-        </div>
-        <div class="price-row total-row">
-          <span>💰 Total a pagar</span>
-          <span id="finalPrice">$${selectedPlan.price.toLocaleString()} CLP</span>
+    {
+      id:"pyme", name:"Pyme Enterprise", badge:"MÁS POPULAR",
+      price:"$300.000", currency:"CLP/mes",
+      tagline:"Equipa a todo tu equipo comercial",
+      features:["Hasta 5 usuarios","100 simulaciones al mes","11 mercados verticales","3 modelos comerciales","Informe ejecutivo PDF","Dashboard empresa + vendedor","Gestión de equipo"],
+      cta:"Contratar Pyme →", featured:true,
+    },
+    {
+      id:"enterprise", name:"Business Enterprise", badge:"PREMIUM",
+      price:"A cotizar", currency:"según requerimientos",
+      tagline:"Solución a medida para grandes equipos",
+      features:["Usuarios ilimitados","Simulaciones ilimitadas","Integración CRM","Dashboard enterprise","Desarrollo a medida","Soporte prioritario"],
+      cta:"Contactar →", featured:false,
+    },
+  ];
+ 
+  return (
+    <div style={{minHeight:"100vh",background:C.darkBg,fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');*{box-sizing:border-box}`}</style>
+      <AuthHeader step={2} theme="dark"/>
+      <div style={{padding:"48px 24px 80px"}}>
+        <div style={{maxWidth:900,margin:"0 auto",textAlign:"center" as const}}>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:C.nodeCyan,letterSpacing:".18em",textTransform:"uppercase" as const,marginBottom:12}}>Elige tu plan</div>
+          <h1 style={{fontSize:"clamp(28px,4vw,42px)",fontWeight:800,letterSpacing:"-.04em",color:C.textLight,margin:"0 0 10px",lineHeight:1.1}}>Simple, transparente,<br/>sin sorpresas.</h1>
+          <p style={{fontSize:15,color:C.textLight,opacity:.5,marginBottom:48}}>Un vendedor que cierra una sola venta adicional al mes paga el plan 10 veces.</p>
+ 
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16,textAlign:"left" as const}}>
+            {plans.map(p=>(
+              <div key={p.id} style={{position:"relative",background:p.featured?"rgba(0,102,204,.12)":C.darkSurface,border:`1.5px solid ${p.featured?"rgba(0,102,204,.5)":C.darkBorder}`,borderRadius:20,padding:"32px 28px",display:"flex",flexDirection:"column" as const,gap:0}}>
+                {p.featured&&<div style={{position:"absolute",top:-12,left:"50%",transform:"translateX(-50%)",background:C.blueMain,color:"#fff",fontSize:9,fontWeight:700,padding:"3px 14px",borderRadius:980,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em",whiteSpace:"nowrap" as const}}>{p.badge}</div>}
+                {!p.featured&&<div style={{display:"inline-block",background:"rgba(0,168,255,.1)",border:"1px solid rgba(0,168,255,.25)",borderRadius:980,padding:"3px 10px",fontFamily:"'JetBrains Mono',monospace",fontSize:9,color:"rgba(0,168,255,.9)",letterSpacing:".1em",marginBottom:14}}>{p.badge}</div>}
+                {p.featured&&<div style={{height:14}}/>}
+                <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"rgba(200,216,240,.6)",letterSpacing:".12em",textTransform:"uppercase" as const,marginBottom:12}}>{p.name}</div>
+                <div style={{fontSize:p.id==="enterprise"?28:40,fontWeight:800,color:C.textLight,letterSpacing:"-.04em",lineHeight:1,marginBottom:4}}>{p.price} <span style={{fontSize:14,fontWeight:400,color:"rgba(200,216,240,.4)"}}>{p.currency}</span></div>
+                <div style={{fontSize:12,color:"rgba(200,216,240,.45)",marginBottom:20,lineHeight:1.5}}>{p.tagline}</div>
+                <div style={{height:1,background:"rgba(255,255,255,.08)",marginBottom:20}}/>
+                <div style={{display:"flex",flexDirection:"column" as const,gap:10,marginBottom:28,flex:1}}>
+                  {p.features.map((f,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                      <span style={{color:C.success,fontSize:13,flexShrink:0,marginTop:1}}>✓</span>
+                      <span style={{fontSize:13,color:"rgba(200,216,240,.8)",lineHeight:1.5}}>{f}</span>
+                    </div>
+                  ))}
+                </div>
+                <a
+                  href={p.id==="enterprise"
+                    ? `https://minervaai-production-9c2d.up.railway.app/enterprise?uid=${session?.user?.id}`
+                    : `https://minervaai-production-9c2d.up.railway.app/checkout?plan=${p.id}&uid=${session?.user?.id}&email=${encodeURIComponent(session?.user?.email||"")}`}
+                  style={{display:"block",textAlign:"center" as const,padding:"14px",borderRadius:12,fontSize:14,fontWeight:700,textDecoration:"none",background:p.featured?C.blueMain:"transparent",color:p.featured?"#fff":"rgba(200,216,240,.7)",border:p.featured?"none":"1px solid rgba(255,255,255,.15)",transition:"all .2s",fontFamily:"inherit"}}
+                  onMouseEnter={e=>{if(!p.featured)(e.currentTarget as any).style.borderColor="rgba(255,255,255,.4)";}}
+                  onMouseLeave={e=>{if(!p.featured)(e.currentTarget as any).style.borderColor="rgba(255,255,255,.15)";}}
+                >{p.cta}</a>
+              </div>
+            ))}
+          </div>
+ 
+          <p style={{marginTop:32,fontSize:12,color:"rgba(200,216,240,.3)",fontFamily:"'JetBrains Mono',monospace"}}>¿Ya tienes una suscripción activa? <button onClick={()=>navigate("dashboard")} style={{background:"none",border:"none",color:C.nodeCyan,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Ir al dashboard →</button></p>
         </div>
       </div>
-
-      <button type="submit" class="submit-btn" id="submitBtn">
-        🔒 Pagar con WebPay →
-      </button>
-
-      <div class="security-badge">
-        <span>🔐</span> Pago seguro encriptado · Procesado por Flow
-      </div>
-
-    </form>
-  </div>
-</div>
-
-<script>
-const basePrice = ${selectedPlan.price};
-const plan = '${plan}';
-
-// Discount code logic con animación
-document.getElementById('discountCode').addEventListener('input', function() {
-  const code = this.value.trim().toUpperCase();
-  const discountRow = document.getElementById('discountRow');
-  const discountAmount = document.getElementById('discountAmount');
-  const finalPrice = document.getElementById('finalPrice');
-  
-  if (code === 'PRUEBA' || code === 'PRUEBA1') {
-    const discount = basePrice - 350;
-    discountRow.style.display = 'flex';
-    discountRow.style.animation = 'fadeIn 0.3s ease';
-    discountAmount.textContent = '-$' + discount.toLocaleString() + ' CLP';
-    finalPrice.textContent = '$350 CLP';
-    finalPrice.style.color = '#059669';
-    
-    // Efecto visual en el campo
-    this.style.borderColor = '#059669';
-    this.style.background = 'rgba(5,150,105,.1)';
-  } else {
-    discountRow.style.display = 'none';
-    finalPrice.textContent = '$' + basePrice.toLocaleString() + ' CLP';
-    finalPrice.style.color = '#F0F4FF';
-    
-    // Restaurar estilo original
-    this.style.borderColor = 'rgba(0,102,204,.3)';
-    this.style.background = 'rgba(0,102,204,.06)';
-  }
-});
-
-// Form submission con validación mejorada
-document.getElementById('checkoutForm').addEventListener('submit', function(e) {
-  e.preventDefault();
-  
-  const submitBtn = document.getElementById('submitBtn');
-  const email = document.getElementById('email').value.trim();
-  const name = document.getElementById('name').value.trim();
-  const discountCode = document.getElementById('discountCode').value.trim();
-  
-  // Validaciones
-  if (!email || !name) {
-    alert('⚠️ Por favor completa todos los campos requeridos');
-    return;
-  }
-  
-  if (!email.includes('@') || !email.includes('.')) {
-    alert('⚠️ Por favor ingresa un email válido');
-    document.getElementById('email').focus();
-    return;
-  }
-  
-  // Show loading con animación
-  submitBtn.innerHTML = '⏳ Procesando pago...';
-  submitBtn.classList.add('loading');
-  
-  // Calculate final amount
-  let amount = basePrice;
-  if (discountCode.toUpperCase() === 'PRUEBA' || discountCode.toUpperCase() === 'PRUEBA1') {
-    amount = 350;
-  }
-  
-  // Simular delay para mostrar loading
-  setTimeout(() => {
-    // Redirect to Flow
-    const params = new URLSearchParams({
-      plan: plan,
-      email: email,
-      name: name,
-      amount: amount,
-      discount_code: discountCode
-    });
-    
-    window.location.href = '/api/flow-create-order?' + params.toString();
-  }, 800);
-});
-
-// Animación CSS
-const style = document.createElement('style');
-style.textContent = \`
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
+    </div>
+  );
 }
-\`;
-document.head.appendChild(style);
-</script>
-
-</body>
-</html>`);
-});
+ 
 // ── MARKET SCREEN ──────────────────────────────────────────────────
 function MarketScreen({ selected, onSelect, customContext, onCustomContext }:any) {
   return (
@@ -791,7 +899,7 @@ function MarketScreen({ selected, onSelect, customContext, onCustomContext }:any
     </div>
   );
 }
-
+ 
 // ── MODEL SCREEN ───────────────────────────────────────────────────
 function ModelScreen({ market, selected, onSelect, customModel, onCustomModel }:any) {
   return (
@@ -851,7 +959,7 @@ function ModelScreen({ market, selected, onSelect, customModel, onCustomModel }:
     </div>
   );
 }
-
+ 
 // ── CLIENT SCREEN ──────────────────────────────────────────────────
 function ClientScreen({ market, model, data, onChange }:any) {
   const inp:any = { background:C.lightCard, border:`1px solid ${C.lightBorder}`, color:C.textDark, borderRadius:8, padding:"10px 14px", fontSize:13, fontFamily:"inherit", outline:"none", width:"100%", boxSizing:"border-box", transition:"border-color .15s" };
@@ -888,7 +996,7 @@ function ClientScreen({ market, model, data, onChange }:any) {
     </div>
   );
 }
-
+ 
 // ── NEURAL MAP SVG ─────────────────────────────────────────────────
 function NeuralMapSVG({ model, weights, activeId }:any) {
   const sm:any = Object.fromEntries(model.stakeholders.map((s:any)=>[s.id,s]));
@@ -931,7 +1039,7 @@ function NeuralMapSVG({ model, weights, activeId }:any) {
     </svg>
   );
 }
-
+ 
 // ── NEURAL MAP SCREEN ──────────────────────────────────────────────
 function NeuralMapScreen({ market, model, clientData, weights, onWeightChange }:any) {
   return (
@@ -940,11 +1048,11 @@ function NeuralMapScreen({ market, model, clientData, weights, onWeightChange }:
       <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,letterSpacing:".15em",color:C.blueMain,marginBottom:6,textTransform:"uppercase" as const}}>Paso 4 de 5</div>
       <div style={{fontSize:"clamp(20px,4vw,30px)",fontWeight:800,letterSpacing:"-.03em",color:C.textDark,lineHeight:1.1,marginBottom:6}}>Mapa Neural de Influencia</div>
       <div style={{fontSize:13,color:C.textGray,marginBottom:22,lineHeight:1.6}}>Ajusta el peso de influencia de cada stakeholder según tu conocimiento del cliente. Los porcentajes afectan directamente los prompts de los agentes.</div>
-
+ 
       <div style={{background:C.lightCard,border:`1px solid ${C.lightBorder}`,borderRadius:16,padding:20,marginBottom:20,boxShadow:"0 2px 12px rgba(0,0,0,.05)"}}>
         <NeuralMapSVG model={model} weights={weights} activeId={null}/>
       </div>
-
+ 
       <div style={{display:"flex",gap:8,flexWrap:"wrap" as const,marginBottom:20}}>
         {Object.entries(NODE_TYPES).map(([k,v]:any)=>(
           <div key={k} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 11px",background:v.color+"10",border:`1px solid ${v.color}28`,borderRadius:20}}>
@@ -953,7 +1061,7 @@ function NeuralMapScreen({ market, model, clientData, weights, onWeightChange }:
           </div>
         ))}
       </div>
-
+ 
       <div style={{background:C.lightCard,border:`1px solid ${C.lightBorder}`,borderRadius:14,padding:20,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
         <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:9,color:C.blueMain,letterSpacing:".12em",textTransform:"uppercase" as const,marginBottom:16}}>Calibrar pesos de influencia</div>
         {model.stakeholders.map((s:any)=>{
@@ -980,7 +1088,7 @@ function NeuralMapScreen({ market, model, clientData, weights, onWeightChange }:
     </div>
   );
 }
-
+ 
 // ── AGENT CARD ─────────────────────────────────────────────────────
 function AgentCard({ agent, response, isActive }:any) {
   return (
@@ -1000,7 +1108,7 @@ function AgentCard({ agent, response, isActive }:any) {
     </div>
   );
 }
-
+ 
 // ── SIMULATION SCREEN ──────────────────────────────────────────────
 function SimulationScreen({ market, model, clientData, weights, profile }:any) {
   const [phase, setPhase] = useState<"idle"|"running"|"complete">("idle");
@@ -1009,7 +1117,7 @@ function SimulationScreen({ market, model, clientData, weights, profile }:any) {
   const [report, setReport] = useState<string|null>(null);
   const [progress, setProgress] = useState({current:0,total:0});
   const endRef = useRef<any>(null);
-
+ 
   const empresa = profile?.empresa || "Tu Empresa";
   const enrichedClient = {...clientData, customModel: model.customModelDesc||""};
   const agents = model.agentDefs.map((a:any,i:number)=>({
@@ -1018,7 +1126,7 @@ function SimulationScreen({ market, model, clientData, weights, profile }:any) {
     company: a.side==="vendedor" ? empresa.toUpperCase() : a.company,
     systemPrompt: a.sys(market, enrichedClient),
   }));
-
+ 
   const scene = `Mercado: ${market.name}${market.customContext?" — "+market.customContext:""} | Modelo: ${model.name}${model.customModelDesc?" — "+model.customModelDesc:""}
 Empresa vendedora: ${empresa}
 Cliente: ${clientData.name||"empresa del sector"} | País: Chile
@@ -1028,7 +1136,7 @@ Valor de la oportunidad: ${clientData.budget||"no especificado"}
 Dolor principal: ${clientData.pain||"optimización operacional"}
 Palabras clave del sector: ${market.keywords?.length ? market.keywords.join(", ") : market.customContext||"sector comercial"}
 Pesos de influencia: ${model.stakeholders.map((s:any)=>`${s.name}: ${weights[s.id]||s.weight}%`).join(", ")}`;
-
+ 
   const runSim = async () => {
     setPhase("running"); setResponses({}); setReport(null);
     setProgress({current:0,total:agents.length});
@@ -1048,37 +1156,37 @@ Pesos de influencia: ${model.stakeholders.map((s:any)=>`${s.name}: ${weights[s.i
       "Eres analista estratégico senior en ventas B2B industriales. Generas informes ejecutivos accionables, directos, sin adornos. Nunca menciones nombres de empresas proveedoras ni marcas comerciales específicas.",
       `MODELO: ${model.name} | MERCADO: ${market.name} | CLIENTE: ${clientData.name||"empresa"}
 PROPUESTA: ${clientData.offerName||"propuesta comercial"} | VENDEDOR: ${empresa}
-
+ 
 REACCIONES DE STAKEHOLDERS:
 ${agents.map((a:any)=>`[${a.name} — ${a.company}]:\n${reps[a.id]}`).join("\n\n")}
-
+ 
 Genera informe ejecutivo en español con estas 5 secciones EXACTAS:
-
+ 
 1. PROBABILIDAD DE AVANCE
 (% estimado para avanzar a siguiente etapa en 60–90 días + 2 frases de justificación)
-
+ 
 2. OBJECIÓN CRÍTICA
 (La más difícil de resolver + táctica específica para manejarla)
-
+ 
 3. NODO NEURONAL CLAVE
 (El stakeholder que define el resultado + por qué + cómo activarlo)
-
+ 
 4. MOVIMIENTO COMPETIDOR
 (Qué hará la competencia, cuándo y cómo neutralizarlo)
-
+ 
 5. PRÓXIMOS 3 PASOS
 (Ordenados por urgencia, con acción concreta y responsable)
-
+ 
 Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
     );
     setReport(rep); setActiveId(null); setPhase("complete");
     endRef.current?.scrollIntoView({behavior:"smooth"});
   };
-
+ 
   const downloadHTML = () => {
     const date = new Date().toLocaleDateString("es-CL",{year:"numeric",month:"long",day:"numeric"});
     const footer = `<div class="footer">CONFIDENCIAL &middot; MINERVA DEAL ENGINE &middot; Strategic Decision Simulator &middot; ${date}</div>`;
-
+ 
     const coverPage = `
 <div class="cover page-break">
   <div class="cover-badge">🧠 MINERVA DEAL ENGINE &middot; SIMULADOR ESTRATÉGICO B2B</div>
@@ -1090,14 +1198,14 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
   </div>
   ${footer}
 </div>`;
-
+ 
     const reportSections = (report||"").split(/\n(?=\d\.\s)/).map((sec:string)=>{
       const lines = sec.trim().split("\n");
       const header = lines[0];
       const body = lines.slice(1).join("\n").trim();
       return `<div class="report-section"><div class="report-section-title">${header}</div><div class="report-section-body">${body.replace(/\n/g,"<br/>")}</div></div>`;
     }).join("");
-
+ 
     const executivePage = `
 <div class="content-page page-break">
   <div class="section-label">02</div>
@@ -1105,13 +1213,13 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
   <div class="report-box">${reportSections||report||""}</div>
   ${footer}
 </div>`;
-
+ 
     const stakeRows = model.stakeholders.map((s:any)=>{
       const nt = NODE_TYPES[s.type];
       const w = weights[s.id]!==undefined ? weights[s.id] : s.weight;
       return `<tr><td><strong>${s.name}</strong></td><td><span class="role-badge" style="background:${nt.color}18;color:${nt.color};border:1px solid ${nt.color}44">${nt.label}</span></td><td style="text-align:center;font-weight:700;color:${nt.color}">${w}%</td><td>${s.trigger}</td><td>${s.id===model.entryNode?"<strong style='color:#0066CC'>Nodo de entrada</strong>":"—"}</td></tr>`;
     }).join("");
-
+ 
     const mapPage = `
 <div class="content-page page-break">
   <div class="section-label">03</div>
@@ -1122,13 +1230,13 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
   </table>
   ${footer}
 </div>`;
-
+ 
     const blueprintSteps = model.proposalSteps.map((ps:any)=>`
 <div class="blueprint-step">
   <div class="blueprint-num" style="background:${model.accent}18;border:2px solid ${model.accent};color:${model.accent}">${ps.n}</div>
   <div><div class="blueprint-step-title">${ps.title}</div><div class="blueprint-step-detail">${ps.detail}</div></div>
 </div>`).join("");
-
+ 
     const blueprintPage = `
 <div class="content-page page-break">
   <div class="section-label">04</div>
@@ -1136,7 +1244,7 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
   <div class="blueprint-container">${blueprintSteps}</div>
   ${footer}
 </div>`;
-
+ 
     const agentCards = agents.map((ag:any)=>{
       const roleColor = ag.side==="cliente"?"#059669":ag.side==="competidor"?"#DC2626":"#0066CC";
       const roleBg = ag.side==="cliente"?"#dcfce7":ag.side==="competidor"?"#fee2e2":"#dbeafe";
@@ -1151,7 +1259,7 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
   <div class="agent-response">${(responses[ag.id]||"").replace(/\n/g,"<br/>")}</div>
 </div>`;
     }).join("");
-
+ 
     const agentsPage = `
 <div class="content-page">
   <div class="section-label">05</div>
@@ -1159,7 +1267,7 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
   ${agentCards}
   ${footer}
 </div>`;
-
+ 
     const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1240,7 +1348,7 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
   ${agentsPage}
 </div>
 </body></html>`;
-
+ 
     const blob = new Blob([html],{type:"text/html;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1248,14 +1356,14 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
     a.download=`MINERVA_${model.badge}_${(clientData.name||"Cliente").replace(/\s+/g,"_")}_${date.replace(/\s/g,"_")}.html`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
-
+ 
   return (
     <div style={{animation:"mFadeUp .4s ease",padding:"32px 0"}}>
       <ContextBar market={market} model={model} offerName={clientData.offerName}/>
       <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,letterSpacing:".15em",color:C.blueMain,marginBottom:6,textTransform:"uppercase" as const}}>Paso 5 de 5</div>
       <div style={{fontSize:"clamp(20px,4vw,30px)",fontWeight:800,letterSpacing:"-.03em",color:C.textDark,lineHeight:1.1,marginBottom:6}}>Simulación Multiagente</div>
       <div style={{fontSize:13,color:C.textGray,marginBottom:22,lineHeight:1.6}}>{clientData.offerName||"Propuesta"} · {clientData.name||"Cliente"} · {market.name}</div>
-
+ 
       {phase==="idle"&&(
         <div style={{textAlign:"center",padding:"48px 20px",background:C.lightCard,borderRadius:16,border:`1px solid ${C.lightBorder}`,boxShadow:"0 2px 12px rgba(0,0,0,.05)"}}>
           <div style={{fontSize:48,marginBottom:16}}>🧠</div>
@@ -1268,7 +1376,7 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
           </button>
         </div>
       )}
-
+ 
       {phase==="running"&&(
         <div style={{marginBottom:20,background:C.lightCard,border:`1px solid ${C.lightBorder}`,borderRadius:12,padding:"14px 18px",boxShadow:"0 1px 4px rgba(0,0,0,.04)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -1280,11 +1388,11 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
           </div>
         </div>
       )}
-
+ 
       {agents.map((ag:any)=>(
         <AgentCard key={ag.id} agent={ag} response={responses[ag.id]} isActive={activeId===ag.id}/>
       ))}
-
+ 
       {(activeId==="report"||report)&&(
         <div style={{background:C.lightCard,border:`1px solid ${C.blueMain}33`,borderLeft:`4px solid ${C.blueMain}`,borderRadius:12,padding:"18px 20px",marginTop:8,marginBottom:12,boxShadow:"0 2px 12px rgba(0,102,204,.08)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
@@ -1298,7 +1406,7 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
           {report&&<div style={{color:C.textDark,fontSize:13,lineHeight:1.85,whiteSpace:"pre-wrap" as const,borderTop:`1px solid ${C.lightBorder2}`,paddingTop:14}}>{report}</div>}
         </div>
       )}
-
+ 
       {phase==="complete"&&(
         <div style={{textAlign:"center",marginTop:24,padding:"24px",background:C.lightCard,border:`1px solid ${C.success}33`,borderRadius:14,boxShadow:"0 2px 12px rgba(5,150,105,.06)"}}>
           <div style={{color:C.success,fontSize:13,fontFamily:"'JetBrains Mono',monospace",fontWeight:700,marginBottom:6}}>✓ SIMULACIÓN COMPLETA</div>
@@ -1315,11 +1423,11 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
     </div>
   );
 }
-
+ 
 // ── DASHBOARD SCREEN ───────────────────────────────────────────────
 function DashboardScreen() {
   const { session, profile, subscription, signOut, navigate } = useAuth();
-
+ 
   const [simScreen, setSimScreen]   = useState("market");
   const [market,    setMarket]      = useState<any>(null);
   const [model,     setModel]       = useState<any>(null);
@@ -1327,16 +1435,16 @@ function DashboardScreen() {
   const [weights,   setWeights]     = useState<any>({});
   const [marketCustomContext, setMarketCustomContext] = useState("");
   const [modelCustomDesc,     setModelCustomDesc]     = useState("");
-
+ 
   if (!session) { navigate("login"); return null; }
   if (!profile?.profile_completed) { navigate("onboarding"); return null; }
   if (!subscription) { navigate("pricing"); return null; }
-
+ 
   const SCREENS = ["market","model","client","neural","sim"];
   const step = SCREENS.indexOf(simScreen);
-
+ 
   const handleSignOut = async () => { await signOut(); };
-
+ 
   const handleMarketSelect = (m:any) => {
     const withCtx = m.id==="otro" ? {...m, customContext: marketCustomContext} : m;
     setMarket(withCtx); setSimScreen("model");
@@ -1349,7 +1457,7 @@ function DashboardScreen() {
     setWeights(initW); setSimScreen("client");
   };
   const handleWeightChange = (id:string, val:number) => setWeights((p:any)=>({...p,[id]:val}));
-
+ 
   const canNext = () => {
     if (simScreen==="market") return !!market;
     if (simScreen==="model")  return !!model;
@@ -1365,9 +1473,9 @@ function DashboardScreen() {
   };
   const goBack = () => { const idx=SCREENS.indexOf(simScreen); if(idx>0) setSimScreen(SCREENS[idx-1]); };
   const goToStep = (i:number) => { if(i<step) setSimScreen(SCREENS[i]); };
-
+ 
   const nextLabel = simScreen==="market"?"Continuar → Modelo":simScreen==="model"?"Continuar → Datos del cliente":simScreen==="client"?"Ver Mapa Neural →":simScreen==="neural"?"Iniciar Simulación →":"";
-
+ 
   const STYLES = `
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
     @keyframes mFadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
@@ -1380,12 +1488,12 @@ function DashboardScreen() {
     ::-webkit-scrollbar{width:0}
     input:focus,textarea:focus,select:focus{outline:none}
   `;
-
+ 
   return (
     <div style={{minHeight:"100vh",background:C.lightBg,fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
       <style>{STYLES}</style>
       <AppHeader step={step} onNav={goToStep} user={session?.user} onSignOut={handleSignOut}/>
-
+ 
       {profile?.empresa&&(
         <div style={{background:C.lightCard,borderBottom:`1px solid ${C.lightBorder}`,padding:"7px 28px",display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:10,color:C.textGray,fontFamily:"'JetBrains Mono',monospace"}}>SIMULANDO COMO</span>
@@ -1397,7 +1505,7 @@ function DashboardScreen() {
           {subscription?.plan&&<><span style={{fontSize:10,color:C.lightBorder}}>·</span><span style={{fontSize:9,fontFamily:"'JetBrains Mono',monospace",color:C.blueMain,background:C.blueMain+"12",border:`1px solid ${C.blueMain}22`,padding:"1px 8px",borderRadius:20,textTransform:"uppercase" as const}}>{subscription.plan}</span></>}
         </div>
       )}
-
+ 
       <div style={{maxWidth:860,margin:"0 auto",padding:`0 24px ${simScreen==="sim"?"40px":"100px"}`}}>
         {simScreen==="market" && <MarketScreen selected={market} onSelect={handleMarketSelect} customContext={marketCustomContext} onCustomContext={setMarketCustomContext}/>}
         {simScreen==="model"  && <ModelScreen  market={market} selected={model} onSelect={handleModelSelect} customModel={modelCustomDesc} onCustomModel={setModelCustomDesc}/>}
@@ -1405,7 +1513,7 @@ function DashboardScreen() {
         {simScreen==="neural" && <NeuralMapScreen market={market} model={model} clientData={clientData} weights={weights} onWeightChange={handleWeightChange}/>}
         {simScreen==="sim"    && <SimulationScreen market={market} model={model} clientData={clientData} weights={weights} profile={profile}/>}
       </div>
-
+ 
       {simScreen!=="sim"&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(255,255,255,0.94)",backdropFilter:"saturate(180%) blur(20px)",WebkitBackdropFilter:"saturate(180%) blur(20px)",borderTop:`1px solid ${C.lightBorder}`,padding:"12px 28px"}}>
           <div style={{maxWidth:860,margin:"0 auto",display:"flex",gap:10}}>
@@ -1417,8 +1525,9 @@ function DashboardScreen() {
     </div>
   );
 }
-
+ 
 // ── APP ROOT ───────────────────────────────────────────────────────
 export default function App() {
   return <AuthGate/>;
 }
+ 
