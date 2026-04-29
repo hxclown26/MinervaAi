@@ -50,10 +50,58 @@ const sb = {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}&status=eq.active&select=*&limit=1`, { headers:this.authH(token) });
     const d = await r.json(); return Array.isArray(d)?d[0]:null;
   },
+  async startFreeTrial(token:string) {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/start_free_trial`, {
+      method:"POST",
+      headers:this.authH(token),
+      body:JSON.stringify({})
+    });
+    return r.json();
+  },
+  async incrementSimulationCount(token:string) {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_simulation_count`, {
+      method:"POST",
+      headers:this.authH(token),
+      body:JSON.stringify({})
+    });
+    return r.json();
+  },
   async saveProfile(token:string, userId:string, profile:any) {
     return this.upsertProfile(token, userId, profile);
   },
 };
+ 
+// ── HELPERS DE PLAN / LÍMITES ──────────────────────────────────────
+function canSimulate(subscription:any, profile:any): { ok:boolean; reason?:string; daysLeft?:number } {
+  // Master: acceso ilimitado, sin restricciones
+  if (profile?.is_master) return { ok:true, reason:"master" };
+ 
+  // Sin suscripción: redirigir a pricing
+  if (!subscription) return { ok:false, reason:"no_plan" };
+ 
+  // Verificar si el período expiró
+  let daysLeft;
+  if (subscription.period_end) {
+    const end = new Date(subscription.period_end).getTime();
+    const now = Date.now();
+    daysLeft = Math.max(0, Math.ceil((end - now) / 86400000));
+    if (end < now) return { ok:false, reason:"period_expired", daysLeft:0 };
+  }
+ 
+  // Verificar si llegó al límite de simulaciones
+  if (subscription.simulations_limit != null &&
+      subscription.simulations_used >= subscription.simulations_limit) {
+    return { ok:false, reason:"limit_reached", daysLeft };
+  }
+ 
+  return { ok:true, daysLeft };
+}
+ 
+function planLabel(plan?:string): string {
+  if (!plan) return "—";
+  const map:any = { free:"FREE TRIAL", salesman:"SALESMAN", pyme:"PYME", enterprise:"ENTERPRISE", demo:"DEMO" };
+  return map[plan] || plan.toUpperCase();
+}
  
 // ── PALETTE ────────────────────────────────────────────────────────
 const C:any = {
@@ -782,7 +830,9 @@ function OnboardingRoute() {
  
 // ── PRICING ROUTE ──────────────────────────────────────────────────
 function PricingRoute() {
-  const { session, profile, navigate } = useAuth();
+  const { session, profile, subscription, refresh, navigate } = useAuth();
+  const [trialLoading, setTrialLoading] = useState(false);
+  const [trialError, setTrialError] = useState("");
  
   useEffect(() => {
     if (!session) navigate("login");
@@ -790,6 +840,27 @@ function PricingRoute() {
   }, [session, profile]);
  
   if (!session || !profile?.profile_completed) return null;
+ 
+  const hasActiveSubscription = !!subscription;
+  const canStartTrial = !hasActiveSubscription;
+ 
+  const startTrial = async () => {
+    if (!session?.access_token) return;
+    setTrialError(""); setTrialLoading(true);
+    try {
+      const result = await sb.startFreeTrial(session.access_token);
+      if (result?.message || result?.code) {
+        setTrialError(result.message || "No pudimos activar el trial. Intenta nuevamente.");
+        setTrialLoading(false);
+        return;
+      }
+      await refresh();
+      navigate("dashboard");
+    } catch {
+      setTrialError("Error de conexión. Intenta nuevamente.");
+      setTrialLoading(false);
+    }
+  };
  
   const plans = [
     {
@@ -823,7 +894,58 @@ function PricingRoute() {
         <div style={{maxWidth:900,margin:"0 auto",textAlign:"center" as const}}>
           <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:C.nodeCyan,letterSpacing:".18em",textTransform:"uppercase" as const,marginBottom:12}}>Elige tu plan</div>
           <h1 style={{fontSize:"clamp(28px,4vw,42px)",fontWeight:800,letterSpacing:"-.04em",color:C.textLight,margin:"0 0 10px",lineHeight:1.1}}>Simple, transparente,<br/>sin sorpresas.</h1>
-          <p style={{fontSize:15,color:C.textLight,opacity:.5,marginBottom:48}}>Un vendedor que cierra una sola venta adicional al mes paga el plan 10 veces.</p>
+          <p style={{fontSize:15,color:C.textLight,opacity:.5,marginBottom:32}}>Un vendedor que cierra una sola venta adicional al mes paga el plan 10 veces.</p>
+ 
+          {/* Banner Free Trial — solo si NO tiene subscription activa */}
+          {canStartTrial && (
+            <div style={{
+              background:"linear-gradient(135deg, rgba(0,168,255,.15), rgba(0,102,204,.08))",
+              border:`1.5px solid ${C.nodeCyan}55`,
+              borderRadius:16,
+              padding:"24px 28px",
+              marginBottom:32,
+              display:"flex",
+              alignItems:"center",
+              justifyContent:"space-between",
+              gap:20,
+              flexWrap:"wrap" as const,
+              textAlign:"left" as const
+            }}>
+              <div style={{flex:1,minWidth:240}}>
+                <div style={{display:"inline-block",fontFamily:"'JetBrains Mono',monospace",fontSize:9,color:C.nodeCyan,letterSpacing:".15em",background:C.nodeCyan+"22",border:`1px solid ${C.nodeCyan}55`,padding:"3px 10px",borderRadius:980,marginBottom:10}}>RECOMENDADO PARA EMPEZAR</div>
+                <div style={{fontSize:20,fontWeight:800,color:C.textLight,marginBottom:6,letterSpacing:"-.02em"}}>Probá gratis 30 días</div>
+                <div style={{fontSize:13,color:"rgba(200,216,240,.7)",lineHeight:1.5}}>2 simulaciones completas con todos los agentes. Sin tarjeta de crédito.</div>
+                {trialError && <div style={{marginTop:10,padding:"8px 12px",background:C.error+"15",border:`1px solid ${C.error}40`,borderRadius:8,fontSize:12,color:C.error}}>{trialError}</div>}
+              </div>
+              <button
+                onClick={startTrial}
+                disabled={trialLoading}
+                style={{
+                  padding:"14px 28px",
+                  background:trialLoading?"rgba(255,255,255,.1)":C.nodeCyan,
+                  border:"none",borderRadius:12,
+                  color:trialLoading?"rgba(255,255,255,.4)":"#000",
+                  fontSize:14,fontWeight:700,
+                  cursor:trialLoading?"not-allowed":"pointer",
+                  fontFamily:"inherit",
+                  whiteSpace:"nowrap" as const,
+                  transition:"all .15s"
+                }}
+              >{trialLoading?"Activando...":"Empezar trial gratis →"}</button>
+            </div>
+          )}
+ 
+          {hasActiveSubscription && (
+            <div style={{
+              background:"rgba(0,200,150,.08)",
+              border:`1px solid ${C.success}40`,
+              borderRadius:12,padding:"12px 18px",marginBottom:32,
+              fontSize:13,color:"rgba(200,216,240,.85)"
+            }}>
+              ✓ Ya tienes una suscripción <strong>{planLabel(subscription.plan)}</strong> activa.
+              <button onClick={()=>navigate("dashboard")} style={{marginLeft:10,background:"none",border:"none",color:C.nodeCyan,cursor:"pointer",fontSize:13,fontFamily:"inherit",textDecoration:"underline"}}>Ir al dashboard →</button>
+            </div>
+          )}
  
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16,textAlign:"left" as const}}>
             {plans.map(p=>(
@@ -855,7 +977,7 @@ function PricingRoute() {
             ))}
           </div>
  
-          <p style={{marginTop:32,fontSize:12,color:"rgba(200,216,240,.3)",fontFamily:"'JetBrains Mono',monospace"}}>¿Ya tienes una suscripción activa? <button onClick={()=>navigate("dashboard")} style={{background:"none",border:"none",color:C.nodeCyan,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Ir al dashboard →</button></p>
+          <p style={{marginTop:32,fontSize:12,color:"rgba(200,216,240,.3)",fontFamily:"'JetBrains Mono',monospace"}}>Todos los planes incluyen acceso completo a la plataforma. Cancela cuando quieras.</p>
         </div>
       </div>
     </div>
@@ -1111,11 +1233,13 @@ function AgentCard({ agent, response, isActive }:any) {
  
 // ── SIMULATION SCREEN ──────────────────────────────────────────────
 function SimulationScreen({ market, model, clientData, weights, profile }:any) {
+  const { session, subscription, refresh, navigate } = useAuth();
   const [phase, setPhase] = useState<"idle"|"running"|"complete">("idle");
   const [responses, setResponses] = useState<any>({});
   const [activeId, setActiveId] = useState<string|null>(null);
   const [report, setReport] = useState<string|null>(null);
   const [progress, setProgress] = useState({current:0,total:0});
+  const [blockReason, setBlockReason] = useState<string|null>(null);
   const endRef = useRef<any>(null);
  
   const empresa = profile?.empresa || "Tu Empresa";
@@ -1138,6 +1262,13 @@ Palabras clave del sector: ${market.keywords?.length ? market.keywords.join(", "
 Pesos de influencia: ${model.stakeholders.map((s:any)=>`${s.name}: ${weights[s.id]||s.weight}%`).join(", ")}`;
  
   const runSim = async () => {
+    // Verificar permisos antes de iniciar
+    const status = canSimulate(subscription, profile);
+    if (!status.ok) {
+      setBlockReason(status.reason || "no_plan");
+      return;
+    }
+ 
     setPhase("running"); setResponses({}); setReport(null);
     setProgress({current:0,total:agents.length});
     const reps:any = {};
@@ -1181,6 +1312,17 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
     );
     setReport(rep); setActiveId(null); setPhase("complete");
     endRef.current?.scrollIntoView({behavior:"smooth"});
+ 
+    // Incrementar contador de simulaciones (solo si no es master)
+    if (!profile?.is_master && session?.access_token) {
+      try {
+        await sb.incrementSimulationCount(session.access_token);
+        await refresh();
+      } catch (e) {
+        // Si falla el incremento, igual mostramos el resultado al usuario
+        console.error("Error incrementando contador:", e);
+      }
+    }
   };
  
   const downloadHTML = () => {
@@ -1364,15 +1506,66 @@ Máx. 420 palabras. Directo, ejecutivo, sin relleno.`
       <div style={{fontSize:"clamp(20px,4vw,30px)",fontWeight:800,letterSpacing:"-.03em",color:C.textDark,lineHeight:1.1,marginBottom:6}}>Simulación Multiagente</div>
       <div style={{fontSize:13,color:C.textGray,marginBottom:22,lineHeight:1.6}}>{clientData.offerName||"Propuesta"} · {clientData.name||"Cliente"} · {market.name}</div>
  
-      {phase==="idle"&&(
-        <div style={{textAlign:"center",padding:"48px 20px",background:C.lightCard,borderRadius:16,border:`1px solid ${C.lightBorder}`,boxShadow:"0 2px 12px rgba(0,0,0,.05)"}}>
-          <div style={{fontSize:48,marginBottom:16}}>🧠</div>
-          <div style={{color:C.textDark,fontSize:18,fontWeight:700,marginBottom:8}}>Todo listo para simular</div>
-          <div style={{color:C.textGray,fontSize:13,marginBottom:28,lineHeight:1.7}}>{agents.length} agentes activados · {model.stakeholders.length} stakeholders mapeados<br/>Competidor sin nombre · Vendedor como {empresa}</div>
-          <button onClick={runSim} style={{padding:"16px 48px",background:C.textDark,border:"none",color:"#fff",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",letterSpacing:".04em",transition:"opacity .15s"}}
-            onMouseEnter={e=>(e.currentTarget as any).style.opacity=".85"}
-            onMouseLeave={e=>(e.currentTarget as any).style.opacity="1"}>
-            ⚡ Ejecutar Red Neural →
+      {phase==="idle" && !blockReason && (() => {
+        // Verificar si puede simular ANTES de mostrar el botón
+        const status = canSimulate(subscription, profile);
+        if (!status.ok) {
+          // No puede simular: mostrar mensaje de bloqueo en lugar del botón
+          const isExpired = status.reason === "period_expired";
+          const isLimit   = status.reason === "limit_reached";
+          return (
+            <div style={{textAlign:"center" as const,padding:"48px 24px",background:C.lightCard,borderRadius:16,border:`1.5px solid ${C.error}30`,boxShadow:"0 2px 12px rgba(0,0,0,.05)"}}>
+              <div style={{fontSize:42,marginBottom:14}}>🔒</div>
+              <div style={{color:C.textDark,fontSize:19,fontWeight:800,marginBottom:8,letterSpacing:"-.02em"}}>
+                {isExpired ? "Tu trial gratis expiró" : isLimit ? "Llegaste al límite del trial" : "Necesitas un plan activo"}
+              </div>
+              <div style={{color:C.textGray,fontSize:13,marginBottom:24,lineHeight:1.6,maxWidth:380,margin:"0 auto 24px"}}>
+                {isExpired
+                  ? "Pasaron los 30 días del trial gratis. Para seguir simulando, contrata un plan."
+                  : isLimit
+                  ? `Ya usaste tus ${subscription?.simulations_limit || 2} simulaciones del trial gratis. Contrata un plan para acceso ilimitado.`
+                  : "Para correr simulaciones necesitas tener un plan activo."}
+              </div>
+              <button onClick={()=>navigate("pricing")} style={{padding:"14px 36px",background:C.blueMain,border:"none",color:"#fff",borderRadius:12,fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",letterSpacing:".02em"}}>
+                Ver planes →
+              </button>
+            </div>
+          );
+        }
+        // Puede simular: botón normal
+        const remaining = subscription?.simulations_limit != null
+          ? Math.max(0, subscription.simulations_limit - (subscription.simulations_used || 0))
+          : null;
+        return (
+          <div style={{textAlign:"center" as const,padding:"48px 20px",background:C.lightCard,borderRadius:16,border:`1px solid ${C.lightBorder}`,boxShadow:"0 2px 12px rgba(0,0,0,.05)"}}>
+            <div style={{fontSize:48,marginBottom:16}}>🧠</div>
+            <div style={{color:C.textDark,fontSize:18,fontWeight:700,marginBottom:8}}>Todo listo para simular</div>
+            <div style={{color:C.textGray,fontSize:13,marginBottom:24,lineHeight:1.7}}>{agents.length} agentes activados · {model.stakeholders.length} stakeholders mapeados<br/>Competidor sin nombre · Vendedor como {empresa}</div>
+            {!profile?.is_master && remaining != null && remaining <= 1 && (
+              <div style={{fontSize:11,color:C.gold,marginBottom:16,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".04em"}}>
+                ⚠ Esta {remaining === 0 ? "será tu" : "es tu última"} simulación del trial
+              </div>
+            )}
+            <button onClick={runSim} style={{padding:"16px 48px",background:C.textDark,border:"none",color:"#fff",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",letterSpacing:".04em",transition:"opacity .15s"}}
+              onMouseEnter={e=>(e.currentTarget as any).style.opacity=".85"}
+              onMouseLeave={e=>(e.currentTarget as any).style.opacity="1"}>
+              ⚡ Ejecutar Red Neural →
+            </button>
+          </div>
+        );
+      })()}
+ 
+      {phase==="idle" && blockReason && (
+        <div style={{textAlign:"center" as const,padding:"48px 24px",background:C.lightCard,borderRadius:16,border:`1.5px solid ${C.error}30`}}>
+          <div style={{fontSize:42,marginBottom:14}}>🔒</div>
+          <div style={{color:C.textDark,fontSize:19,fontWeight:800,marginBottom:8}}>No se pudo iniciar la simulación</div>
+          <div style={{color:C.textGray,fontSize:13,marginBottom:24,lineHeight:1.6}}>
+            {blockReason === "period_expired" ? "Tu trial gratis expiró."
+              : blockReason === "limit_reached" ? "Ya usaste todas tus simulaciones del trial."
+              : "Necesitas un plan activo para simular."}
+          </div>
+          <button onClick={()=>navigate("pricing")} style={{padding:"14px 36px",background:C.blueMain,border:"none",color:"#fff",borderRadius:12,fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            Ver planes →
           </button>
         </div>
       )}
@@ -1502,9 +1695,64 @@ function DashboardScreen() {
           <span style={{fontSize:10,color:C.textGray}}>{profile.pais}</span>
           <span style={{fontSize:10,color:C.lightBorder}}>·</span>
           <span style={{fontSize:10,color:C.textGray}}>{profile.giro}</span>
-          {subscription?.plan&&<><span style={{fontSize:10,color:C.lightBorder}}>·</span><span style={{fontSize:9,fontFamily:"'JetBrains Mono',monospace",color:C.blueMain,background:C.blueMain+"12",border:`1px solid ${C.blueMain}22`,padding:"1px 8px",borderRadius:20,textTransform:"uppercase" as const}}>{subscription.plan}</span></>}
+          {subscription?.plan&&<><span style={{fontSize:10,color:C.lightBorder}}>·</span><span style={{fontSize:9,fontFamily:"'JetBrains Mono',monospace",color:C.blueMain,background:C.blueMain+"12",border:`1px solid ${C.blueMain}22`,padding:"1px 8px",borderRadius:20,textTransform:"uppercase" as const}}>{planLabel(subscription.plan)}</span></>}
+          {profile?.is_master&&<span style={{fontSize:9,fontFamily:"'JetBrains Mono',monospace",color:C.gold,background:C.gold+"15",border:`1px solid ${C.gold}40`,padding:"1px 8px",borderRadius:20,letterSpacing:".06em"}}>★ MASTER</span>}
         </div>
       )}
+ 
+      {/* Banner de uso del plan — sólo si NO es master Y tiene contador */}
+      {!profile?.is_master && subscription?.simulations_limit != null && (() => {
+        const used = subscription.simulations_used || 0;
+        const limit = subscription.simulations_limit;
+        const pct = Math.min(100, (used/limit)*100);
+        const remaining = Math.max(0, limit - used);
+        const status = canSimulate(subscription, profile);
+        const periodExpired = status.reason === "period_expired";
+        const limitReached = status.reason === "limit_reached";
+        const warning = limitReached || periodExpired;
+        const barColor = warning ? C.error : pct >= 75 ? C.gold : C.success;
+        const daysLeft = status.daysLeft;
+ 
+        return (
+          <div style={{background:warning?C.error+"08":C.lightBg,borderBottom:`1px solid ${warning?C.error+"30":C.lightBorder}`,padding:"10px 28px"}}>
+            <div style={{maxWidth:860,margin:"0 auto",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap" as const}}>
+              <div style={{flex:1,minWidth:220}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                  <span style={{fontSize:11,fontWeight:700,color:warning?C.error:C.textDark}}>
+                    {periodExpired ? "Tu trial expiró"
+                      : limitReached ? "Llegaste al límite del trial"
+                      : `${used} de ${limit} simulaciones usadas`}
+                  </span>
+                  {daysLeft !== undefined && !periodExpired && (
+                    <span style={{fontSize:10,color:C.textGray,fontFamily:"'JetBrains Mono',monospace"}}>
+                      · {daysLeft} {daysLeft===1?"día restante":"días restantes"}
+                    </span>
+                  )}
+                </div>
+                <div style={{height:5,background:C.lightBorder2,borderRadius:20,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${pct}%`,background:barColor,borderRadius:20,transition:"width .3s"}}/>
+                </div>
+                {!warning && remaining <= 1 && (
+                  <div style={{fontSize:10,color:C.textGray,marginTop:5}}>
+                    {remaining === 0 ? "Sin simulaciones restantes" : "Te queda 1 simulación. Considera contratar un plan."}
+                  </div>
+                )}
+              </div>
+              <button onClick={()=>navigate("pricing")} style={{
+                padding:"8px 16px",
+                background:warning?C.error:"transparent",
+                border:warning?"none":`1px solid ${C.lightBorder}`,
+                color:warning?"#fff":C.textDark,
+                borderRadius:8,fontSize:11,fontWeight:700,
+                cursor:"pointer",fontFamily:"inherit",
+                whiteSpace:"nowrap" as const
+              }}>
+                {warning ? "Ver planes →" : "Hacer upgrade"}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
  
       <div style={{maxWidth:860,margin:"0 auto",padding:`0 24px ${simScreen==="sim"?"40px":"100px"}`}}>
         {simScreen==="market" && <MarketScreen selected={market} onSelect={handleMarketSelect} customContext={marketCustomContext} onCustomContext={setMarketCustomContext}/>}
@@ -1530,4 +1778,3 @@ function DashboardScreen() {
 export default function App() {
   return <AuthGate/>;
 }
- 
