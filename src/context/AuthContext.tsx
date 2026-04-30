@@ -110,7 +110,21 @@ export function AuthGate() {
     initAuth();
   }, []);
 
-  const refresh = async () => { setLoading(true); await load(session); };
+  const refresh = async () => {
+    // Refresh silencioso: actualiza profile y subscription SIN tocar la ruta ni mostrar loading.
+    // De lo contrario re-monta DashboardScreen y pierde simScreen, responses, report, etc.
+    if (!session) return;
+    try {
+      const [prof, sub] = await Promise.all([
+        sb.getProfile(session.access_token, session.user.id),
+        sb.getSubscription(session.access_token, session.user.id),
+      ]);
+      setProfile(prof || null);
+      setSubscription(sub || null);
+    } catch {
+      // Silencioso: si falla el refresh no reseteamos la sesión
+    }
+  };
 
   const signOut = async () => {
     if (session?.access_token) { try { await sb.signOut(session.access_token); } catch {} }
@@ -150,4 +164,3 @@ export function AuthGate() {
     </AuthCtx.Provider>
   );
 }
-
