@@ -14,30 +14,81 @@ export function LoginScreen({ onAuth }:any) {
   const handleSubmit = async () => {
     setMsg(null);
     if (!email) { setMsg({type:"error",text:"Ingresa tu correo electrónico"}); return; }
+    // Validar formato básico de email
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setMsg({type:"error",text:"El formato del correo no es válido"}); return;
+    }
     if (mode!=="recover" && !pass) { setMsg({type:"error",text:"Ingresa tu contraseña"}); return; }
     setLoading(true);
     try {
       if (mode==="login") {
         const d = await sb.signIn(email, pass);
-        if (d.error) setMsg({type:"error",text:"Correo o contraseña incorrectos"});
-        else onAuth(d);
+        // Supabase devuelve errores en formato { code, error_code, msg } — NO en d.error
+        if (d.error_code || d.code || !d.access_token) {
+          const errCode = d.error_code || "";
+          if (errCode === "invalid_credentials") {
+            setMsg({type:"error",text:"Correo o contraseña incorrectos. Verifica tus datos."});
+          } else if (errCode === "email_not_confirmed") {
+            setMsg({type:"error",text:"Tu correo aún no está confirmado. Revisa tu bandeja de entrada."});
+          } else if (errCode === "over_request_rate_limit" || (d.msg||"").includes("rate")) {
+            setMsg({type:"error",text:"Demasiados intentos. Espera 5 minutos e intenta de nuevo."});
+          } else {
+            setMsg({type:"error",text:d.msg || d.error_description || "No pudimos iniciar sesión. Intenta nuevamente."});
+          }
+        } else {
+          onAuth(d);
+        }
       } else if (mode==="register") {
         if (pass.length<6) { setMsg({type:"error",text:"La contraseña debe tener al menos 6 caracteres"}); setLoading(false); return; }
         const d = await sb.signUp(email, pass);
-        if (d.error) setMsg({type:"error",text:d.error.message||"Error al crear cuenta"});
+        if (d.error_code || d.code) {
+          const errCode = d.error_code || "";
+          if (errCode === "user_already_exists") {
+            setMsg({type:"error",text:"Ya existe una cuenta con este correo. Inicia sesión."});
+          } else if (errCode === "weak_password") {
+            setMsg({type:"error",text:"La contraseña es muy débil. Usa al menos 8 caracteres con mayúsculas y números."});
+          } else {
+            setMsg({type:"error",text:d.msg || "No pudimos crear la cuenta. Intenta nuevamente."});
+          }
+        }
         else if (d.access_token) { onAuth(d); }
-        else setMsg({type:"ok",text:"Cuenta creada. Inicia sesión para continuar."});
+        else setMsg({type:"ok",text:"Te enviamos un correo de confirmación. Revisa tu bandeja."});
       } else {
         await sb.resetPassword(email);
-        setMsg({type:"ok",text:"Te enviamos un enlace para restablecer tu contraseña"});
+        setMsg({type:"ok",text:"Si tu cuenta existe, te enviamos un enlace para restablecer tu contraseña."});
       }
-    } catch { setMsg({type:"error",text:"Error de conexión"}); }
+    } catch { setMsg({type:"error",text:"Error de conexión. Verifica tu internet e intenta nuevamente."}); }
     setLoading(false);
   };
 
   return (
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif",position:"relative" as const}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');@keyframes mFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}*{box-sizing:border-box}input:focus{outline:none}`}</style>
+
+      {/* Link volver a la landing */}
+      <a
+        href="https://minervadeal.com"
+        style={{
+          position:"absolute" as const,
+          top:18,left:18,zIndex:10,
+          display:"flex",alignItems:"center",gap:6,
+          padding:"7px 14px",
+          background:"rgba(255,255,255,.08)",
+          backdropFilter:"blur(10px)",
+          WebkitBackdropFilter:"blur(10px)",
+          border:`1px solid ${C.nodeCyan}33`,
+          borderRadius:24,
+          fontSize:12,fontWeight:600,
+          color:C.textLight,
+          textDecoration:"none",
+          fontFamily:"inherit",
+          transition:"all .15s"
+        }}
+        onMouseEnter={(e:any)=>{e.currentTarget.style.background="rgba(255,255,255,.14)";e.currentTarget.style.borderColor=C.nodeCyan;}}
+        onMouseLeave={(e:any)=>{e.currentTarget.style.background="rgba(255,255,255,.08)";e.currentTarget.style.borderColor=`${C.nodeCyan}33`;}}
+      >
+        <span style={{fontSize:14}}>←</span> minervadeal.com
+      </a>
       <div style={{background:C.darkBg,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"52px 40px 72px",minHeight:"44vh"}}>
         <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" style={{position:"absolute",inset:0,width:"100%",height:"100%",opacity:.14,pointerEvents:"none"}}>
           {BGE.map(([a,b],i)=>{const na=BGN[a],nb=BGN[b];return<line key={i} x1={na.x} y1={na.y} x2={nb.x} y2={nb.y} stroke={C.nodeBlue} strokeWidth=".4"/>;})  }
