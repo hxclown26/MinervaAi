@@ -90,7 +90,7 @@ export function PricingRoute() {
             }}>
               <div style={{flex:1,minWidth:240}}>
                 <div style={{display:"inline-block",fontFamily:"'JetBrains Mono',monospace",fontSize:9,color:C.nodeCyan,letterSpacing:".15em",background:C.nodeCyan+"22",border:`1px solid ${C.nodeCyan}55`,padding:"3px 10px",borderRadius:980,marginBottom:10}}>RECOMENDADO PARA EMPEZAR</div>
-                <div style={{fontSize:20,fontWeight:800,color:C.textLight,marginBottom:6,letterSpacing:"-.02em"}}>Probá gratis 30 días</div>
+                <div style={{fontSize:20,fontWeight:800,color:C.textLight,marginBottom:6,letterSpacing:"-.02em"}}>Prueba gratis 30 días</div>
                 <div style={{fontSize:13,color:"rgba(200,216,240,.7)",lineHeight:1.5}}>2 simulaciones completas con todos los agentes. Sin tarjeta de crédito.</div>
                 {trialError && <div style={{marginTop:10,padding:"8px 12px",background:C.error+"15",border:`1px solid ${C.error}40`,borderRadius:8,fontSize:12,color:C.error}}>{trialError}</div>}
               </div>
