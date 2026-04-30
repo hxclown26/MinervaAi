@@ -13,6 +13,12 @@ export const sb = {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method:"POST", headers:this.h, body:JSON.stringify({email,password}) });
     return r.json();
   },
+  signInWithGoogle() {
+    // Redirige al usuario a Google OAuth. Cuando vuelve, AuthGate detecta el hash y lo loguea.
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const url = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectTo)}`;
+    window.location.href = url;
+  },
   async signOut(token:string) {
     await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method:"POST", headers:this.authH(token) });
   },
@@ -104,4 +110,3 @@ export const sb = {
     return this.upsertProfile(token, userId, profile);
   },
 };
-
