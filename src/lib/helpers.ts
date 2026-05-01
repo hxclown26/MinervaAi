@@ -1,41 +1,97 @@
-// ── HELPERS DE PLAN / LÍMITES ──────────────────────────────────────
-export function canSimulate(subscription:any, profile:any): { ok:boolean; reason?:string; daysLeft?:number } {
-  // Master: acceso ilimitado, sin restricciones
+/ ── HELPERS DE PLAN / LÍMITES ──────────────────────────────────────
+// Para Free trial: período = 7 días + 5 sims totales (no se resetean)
+// Para Starter/Imperium: período mensual recurrente, contador se resetea cada 30 días
+// Master: acceso ilimitado siempre
+
+export function canSimulate(subscription:any, profile:any): {
+  ok:boolean;
+  reason?:string;
+  daysLeft?:number;
+  daysToPeriodReset?:number;
+  isPeriodExpired?:boolean;
+} {
+  // Master: acceso ilimitado
   if (profile?.is_master) return { ok:true, reason:"master" };
 
-  // Sin suscripción: redirigir a pricing
+  // Sin suscripción
   if (!subscription) return { ok:false, reason:"no_plan" };
 
-  // Verificar si el período expiró
-  let daysLeft;
-  if (subscription.period_end) {
-    const end = new Date(subscription.period_end).getTime();
-    const now = Date.now();
-    daysLeft = Math.max(0, Math.ceil((end - now) / 86400000));
-    if (end < now) return { ok:false, reason:"period_expired", daysLeft:0 };
+  // Cancelada explícitamente
+  if (subscription.status === "canceled") return { ok:false, reason:"canceled" };
+
+  const now = Date.now();
+  const isFreeTrial = subscription.plan === "free" || subscription.billing_cycle === "trial";
+
+  // ── Para Free Trial: usar period_end (7 días) ──
+  if (isFreeTrial) {
+    let daysLeft;
+    if (subscription.period_end) {
+      const end = new Date(subscription.period_end).getTime();
+      daysLeft = Math.max(0, Math.ceil((end - now) / 86400000));
+      if (end < now) return { ok:false, reason:"trial_expired", daysLeft:0, isPeriodExpired:true };
+    }
+    // Verificar límite de simulaciones del trial
+    if (subscription.simulations_limit != null &&
+        subscription.simulations_used >= subscription.simulations_limit) {
+      return { ok:false, reason:"trial_limit_reached", daysLeft };
+    }
+    return { ok:true, daysLeft };
   }
 
-  // Verificar si llegó al límite de simulaciones
+  // ── Para planes pagos (Starter/Imperium mensual o anual) ──
+  // current_period_end = ventana actual de 30 días para reset mensual de contador
+  let daysToPeriodReset;
+  if (subscription.current_period_end) {
+    const periodEnd = new Date(subscription.current_period_end).getTime();
+    daysToPeriodReset = Math.max(0, Math.ceil((periodEnd - now) / 86400000));
+  }
+
+  // Verificar si la suscripción global venció (period_end = 30 días para mensual, 365 para anual)
+  if (subscription.period_end) {
+    const subEnd = new Date(subscription.period_end).getTime();
+    if (subEnd < now) return { ok:false, reason:"subscription_expired", isPeriodExpired:true };
+  }
+
+  // Verificar límite de simulaciones del mes actual
   if (subscription.simulations_limit != null &&
       subscription.simulations_used >= subscription.simulations_limit) {
-    return { ok:false, reason:"limit_reached", daysLeft };
+    return {
+      ok:false,
+      reason:"monthly_limit_reached",
+      daysToPeriodReset,
+    };
   }
 
-  return { ok:true, daysLeft };
+  return { ok:true, daysToPeriodReset };
 }
 
 export function planLabel(plan?:string): string {
   if (!plan) return "—";
-  const map:any = { free:"FREE TRIAL", salesman:"SALESMAN", pyme:"PYME", enterprise:"ENTERPRISE", demo:"DEMO" };
+  const map:any = {
+    free: "FREE TRIAL",
+    starter: "STARTER",
+    imperium: "IMPERIUM",
+    pyme: "PYME",
+    enterprise: "ENTERPRISE",
+    demo: "DEMO",
+    salesman: "SALESMAN",  // legacy
+  };
   return map[plan] || plan.toUpperCase();
+}
+
+// Helper para mostrar cycle: "Mensual" / "Anual" / "Trial"
+export function cycleLabel(billing_cycle?:string): string {
+  if (!billing_cycle) return "—";
+  const map:any = { monthly:"MENSUAL", annual:"ANUAL", trial:"TRIAL", none:"—" };
+  return map[billing_cycle] || billing_cycle.toUpperCase();
 }
 
 
 // ── HELPERS DE SIMULACIONES / GAMIFICACIÓN ─────────────────────────
 
 // Niveles: cada N wins se sube de nivel. Solo wins suman, lost neutros.
-export const LEVEL_THRESHOLDS = [0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55];
-export const LEVEL_NAMES = ["Aprendiz","Prospector","Vendedor","Closer","Hunter","Top Performer","Maestro","Leyenda","Mítico","Imparable"];
+export const LEVEL_THRESHOLDS = [0, 1, 3, 6, 10, 15, 21, 30];
+export const LEVEL_NAMES = ["Acolyte of Minerva","Messenger of Mercury","Orator of Apollo","Champion of Mars","Chosen of Diana","Consul of Rome","Imperator","Ascended Minerva"];
 
 export function calculateLevel(wins:number) {
   let level = 1;
@@ -49,7 +105,7 @@ export function calculateLevel(wins:number) {
     : Math.round(((wins - currentThreshold) / (nextThreshold - currentThreshold)) * 100);
   return {
     level,
-    name: LEVEL_NAMES[level - 1] || "Imparable",
+    name: LEVEL_NAMES[level - 1] || "Ascended Minerva",
     wins,
     nextAt: nextThreshold,
     progress: Math.min(100, Math.max(0, progress)),
