@@ -45,23 +45,36 @@ async function flowPost(endpoint, params) {
   const signed = signParams({ apiKey: FLOW_API_KEY, ...params });
   const body   = new URLSearchParams(signed).toString();
 
+  // ── DEBUG LOG ──────────────────────────────────────────────────────────────
+  console.log(`FLOW POST → ${endpoint}`);
+  console.log("FLOW POST PARAMS (sin firma):", JSON.stringify(params));
+  console.log("FLOW POST BODY:", body);
+  // ──────────────────────────────────────────────────────────────────────────
+
   const res = await fetch(`${FLOW_BASE_URL}/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
 
+  const responseText = await res.text();
+  console.log(`FLOW RESPONSE [${res.status}] ${endpoint}:`, responseText);
+
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Flow ${endpoint} error ${res.status}: ${text}`);
+    throw new Error(`Flow ${endpoint} error ${res.status}: ${responseText}`);
   }
-  return res.json();
+  return JSON.parse(responseText);
 }
 
 async function flowGet(endpoint, params) {
   const signed = signParams({ apiKey: FLOW_API_KEY, ...params });
   const qs     = new URLSearchParams(signed).toString();
-  const res    = await fetch(`${FLOW_BASE_URL}/${endpoint}?${qs}`);
+
+  // ── DEBUG LOG ──────────────────────────────────────────────────────────────
+  console.log(`FLOW GET → ${endpoint}`, JSON.stringify(params));
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const res = await fetch(`${FLOW_BASE_URL}/${endpoint}?${qs}`);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Flow GET ${endpoint} error ${res.status}: ${text}`);
@@ -125,6 +138,12 @@ app.get("/api/ping", (req, res) => {
 app.post("/api/subscribe", async (req, res) => {
   const { email, name, planId, couponId, appPlanCode, userId } = req.body;
 
+  // ── DEBUG LOG ──────────────────────────────────────────────────────────────
+  console.log("SUBSCRIBE BODY RECIBIDO:", JSON.stringify(req.body));
+  console.log("FLOW_API_KEY definida:", !!FLOW_API_KEY);
+  console.log("FLOW_SECRET_KEY definida:", !!FLOW_SECRET_KEY);
+  // ──────────────────────────────────────────────────────────────────────────
+
   if (!email || !planId || !appPlanCode) {
     return res.status(400).json({ error: "email, planId y appPlanCode son requeridos" });
   }
@@ -137,7 +156,7 @@ app.post("/api/subscribe", async (req, res) => {
     return res.status(400).json({ error: "El planId no coincide con appPlanCode" });
   }
 
-  console.log("SUBSCRIBE REQUEST:", { email, appPlanCode, planId, couponId });
+  console.log("SUBSCRIBE REQUEST:", { email, appPlanCode, planId: Number(planId), couponId });
 
   try {
     // Paso 1: registrar al cliente en Flow (createCustomer)
@@ -169,13 +188,13 @@ app.post("/api/subscribe", async (req, res) => {
       ...(couponId ? { couponId: Number(couponId) } : {}),
     };
 
+    console.log("SUBSCRIPTION PARAMS FINALES:", JSON.stringify(subscriptionParams));
+
     const subscription = await flowPost("subscription/create", subscriptionParams);
-    console.log("FLOW SUBSCRIPTION CREATED:", subscription);
+    console.log("FLOW SUBSCRIPTION CREATED:", JSON.stringify(subscription));
 
     // Flow devuelve la suscripción con un paymentLink para el primer cobro
-    // Si tiene payment_link → redirigir al usuario
     if (subscription.payment_link) {
-      // Guardar registro pendiente en BD para correlacionar después
       await supabaseInsert("payments", {
         email,
         amount:         subscription.amount || 0,
@@ -190,7 +209,6 @@ app.post("/api/subscribe", async (req, res) => {
       return res.json({ paymentUrl: subscription.payment_link });
     }
 
-    // Si no tiene payment_link, la suscripción ya está activa (sin pago inicial)
     return res.json({
       paymentUrl: `${APP_URL}/api/payment/return?subscription_id=${subscription.subscriptionId}`,
       subscriptionId: subscription.subscriptionId
@@ -211,7 +229,7 @@ app.post("/api/payment/confirm", async (req, res) => {
   const token = req.body?.token || req.query?.token;
   console.log("FLOW CALLBACK RECEIVED:", req.method, { token });
 
-  if (!token) return res.status(200).send("OK"); // Flow espera 200 siempre
+  if (!token) return res.status(200).send("OK");
 
   try {
     const status = await flowGet("payment/getStatus", { token });
@@ -223,7 +241,6 @@ app.post("/api/payment/confirm", async (req, res) => {
       const amount        = status.amount;
       const commerceOrder = status.commerceOrder;
 
-      // Idempotencia: verificar si ya procesamos este commerce_order
       const existing = await fetch(
         `${SUPABASE_URL}/rest/v1/payments?commerce_order=eq.${encodeURIComponent(commerceOrder)}&status=eq.paid&select=id&limit=1`,
         { headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } }
@@ -234,13 +251,11 @@ app.post("/api/payment/confirm", async (req, res) => {
         return res.status(200).send("OK");
       }
 
-      // Marcar pago como pagado
       await supabaseUpdate(
         "payments",
         `commerce_order=eq.${encodeURIComponent(commerceOrder)}`,
         { status: "paid", paid_at: new Date().toISOString(), amount }
-      ).catch(err => {
-        // Si el UPDATE no encuentra el registro previo, hacemos INSERT
+      ).catch(() => {
         return supabaseInsert("payments", {
           email,
           amount,
@@ -258,7 +273,7 @@ app.post("/api/payment/confirm", async (req, res) => {
     return res.status(200).send("OK");
   } catch (err) {
     console.error("ERROR EN CONFIRM:", err);
-    return res.status(200).send("OK"); // siempre 200 a Flow
+    return res.status(200).send("OK");
   }
 });
 
@@ -290,7 +305,6 @@ app.get("/api/payment/return", (req, res) => {
 /**
  * POST /api/quote-request
  * Recibe solicitud de cotización Pyme/Enterprise.
- * Guarda en Supabase + envía email al equipo de ventas y al cliente.
  */
 app.post("/api/quote-request", async (req, res) => {
   const {
@@ -308,7 +322,6 @@ app.post("/api/quote-request", async (req, res) => {
   console.log("QUOTE REQUEST:", { email, empresa, plan_requested });
 
   try {
-    // Guardar en Supabase
     const inserted = await supabaseInsert("quote_requests", {
       user_id: user_id || null,
       email,
@@ -324,13 +337,11 @@ app.post("/api/quote-request", async (req, res) => {
       status: "new",
     });
 
-    // Email al equipo de ventas
     sendSalesNotificationEmail({
       full_name, email, empresa, pais, telefono, cargo,
       plan_requested, team_size, use_case, message
     }).catch(console.error);
 
-    // Email de confirmación al cliente
     sendQuoteConfirmationEmail(email, full_name, plan_requested).catch(console.error);
 
     return res.json({ ok: true, request_id: inserted?.[0]?.id });
