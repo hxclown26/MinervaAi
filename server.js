@@ -125,25 +125,30 @@ async function getOrCreateFlowCustomer(email, name, userId) {
     console.log("FLOW CUSTOMER CREATED:", customer.customerId);
     return customer.customerId;
   } catch (err) {
-    console.log("customer/create falló, intentando recuperar...", err.message);
+    console.log("customer/create falló:", err.message);
   }
 
-  // 2. Intentar por externalId (customerId en Flow = externalId que enviamos)
-  try {
-    const byExternal = await flowGet("customer/get", { customerId: userId || email });
-    console.log("FLOW CUSTOMER BY EXTERNALID:", byExternal.customerId);
-    return byExternal.customerId;
-  } catch {
-    // continuar al siguiente intento
-  }
-
-  // 3. Fallback: buscar por email
+  // 2. Buscar por email (Flow usa su propio customerId, no el externalId)
   try {
     const byEmail = await flowGet("customer/getByEmail", { email });
     console.log("FLOW CUSTOMER BY EMAIL:", byEmail.customerId);
     return byEmail.customerId;
-  } catch (err) {
-    console.error("FLOW CUSTOMER ERROR FINAL:", err.message);
+  } catch (emailErr) {
+    console.log("getByEmail falló:", emailErr.message);
+  }
+
+  // 3. Fallback: crear con externalId único para evitar colisión
+  try {
+    const fallbackId = `${userId || email}_${Date.now()}`;
+    const customer2 = await flowPost("customer/create", {
+      email,
+      name: name || email,
+      externalId: fallbackId,
+    });
+    console.log("FLOW CUSTOMER CREATED (fallback):", customer2.customerId);
+    return customer2.customerId;
+  } catch (fallbackErr) {
+    console.error("FLOW CUSTOMER ERROR FINAL:", fallbackErr.message);
     throw new Error("No pudimos registrar el cliente en Flow");
   }
 }
