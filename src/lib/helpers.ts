@@ -1,4 +1,4 @@
-/ ── HELPERS DE PLAN / LÍMITES ──────────────────────────────────────
+// ── HELPERS DE PLAN / LÍMITES ──────────────────────────────────────
 // Para Free trial: período = 7 días + 5 sims totales (no se resetean)
 // Para Starter/Imperium: período mensual recurrente, contador se resetea cada 30 días
 // Master: acceso ilimitado siempre
