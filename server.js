@@ -1,151 +1,410 @@
 import express from "express";
-import { existsSync } from "fs";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
+import cors from "cors";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import sirv from "sirv";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 5173;
-const isProd = process.env.NODE_ENV === "production";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = dirname(__filename);
+
 const app = express();
-
+app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// ── PROXY CLAUDE ────────────────────────────────────────────────────
-app.post("/api/claude", async (req, res) => {
-  const { system, user } = req.body;
-  if (!system || !user) {
-    return res.status(400).json({ error: "Missing system or user" });
-  }
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 1024,
-        system,
-        messages: [{ role: "user", content: user }],
-      }),
-    });
-    const data = await response.json();
-    console.log("RAW ANTHROPIC:", JSON.stringify(data));
-    const text = data?.content?.[0]?.text || data?.completion || data?.text || "Sin respuesta.";
-    res.json({ content: text });
-  } catch (err) {
-    console.error("Claude API error:", err);
-    res.status(500).json({ error: "Error connecting to Claude API" });
-  }
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const FLOW_API_KEY    = process.env.FLOW_API_KEY;
+const FLOW_SECRET_KEY = process.env.FLOW_SECRET_KEY;
+const FLOW_BASE_URL   = "https://www.flow.cl/api";
+
+const SUPABASE_URL  = process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON = process.env.VITE_SUPABASE_ANON_KEY;
+
+const APP_URL      = process.env.APP_URL      || "https://app.minervadeal.com";
+const SALES_EMAIL  = process.env.SALES_EMAIL  || "hola@minervadeal.com";
+
+// ── NODEMAILER ────────────────────────────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  host:   process.env.SMTP_HOST,
+  port:   Number(process.env.SMTP_PORT) || 587,
+  secure: false,
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
-// ── CHECKOUT ROUTE → FLOW ─────────────────────────────────────────
-app.get('/checkout', (req, res) => {
-  const { plan } = req.query;
-  
-  if (!plan || !['salesman', 'pyme'].includes(plan)) {
-    return res.redirect('/');
-  }
-
-  const planData = {
-    salesman: { amount: 30000, name: 'Plan Salesman' },
-    pyme: { amount: 300000, name: 'Plan Pyme Enterprise' }
-  };
-
-  const selectedPlan = planData[plan];
-  
-  // Construir URL para el Flow API existente
-  const params = new URLSearchParams({
-    plan: plan,
-    amount: selectedPlan.amount,
-    name: selectedPlan.name,
-    // Agregar parámetros adicionales si tu Flow API los necesita
-    currency: 'CLP',
-    subject: `Suscripción ${selectedPlan.name}`
-  });
-  
-  // Redirigir al endpoint de Flow que ya tienes funcionando
-  res.redirect(`/api/flow-create-order?${params.toString()}`);
-});
-
-// ── ENTERPRISE CONTACT (si no lo tienes ya) ───────────────────────
-app.get('/enterprise', (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8"/>
-<title>Business Enterprise · MINERVA</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #040D1A; font-family: system-ui; color: #F0F4FF; min-height: 100vh; padding: 40px 20px; }
-.container { max-width: 600px; margin: 0 auto; }
-.card { background: #0A1628; border: 1px solid #1B3A6B; border-radius: 16px; padding: 32px; }
-.brand { text-align: center; margin-bottom: 32px; font-size: 20px; font-weight: 800; }
-.form-input { width: 100%; padding: 14px; border: 1px solid #1B3A6B; border-radius: 8px; background: #040D1A; color: #F0F4FF; font-size: 14px; margin-bottom: 16px; }
-.submit-btn { width: 100%; padding: 16px; background: #F0B429; color: #040D1A; border: none; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; }
-textarea { resize: vertical; min-height: 100px; }
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="brand">MINERVA</div>
-  <div class="card">
-    <h1 style="font-size:24px;margin-bottom:8px;">Business Enterprise</h1>
-    <p style="color:#C8D8F0;margin-bottom:24px;">Solución a medida para grandes equipos comerciales</p>
-    
-    <form action="/api/enterprise-contact" method="POST">
-      <input type="text" name="nombre" class="form-input" placeholder="Nombre completo" required>
-      <input type="text" name="empresa" class="form-input" placeholder="Empresa" required>
-      <input type="text" name="cargo" class="form-input" placeholder="Cargo" required>
-      <input type="email" name="email" class="form-input" placeholder="Email corporativo" required>
-      <input type="tel" name="telefono" class="form-input" placeholder="Teléfono">
-      <select name="pais" class="form-input" required>
-        <option value="">Selecciona país...</option>
-        <option value="Chile">Chile</option>
-        <option value="Argentina">Argentina</option>
-        <option value="Colombia">Colombia</option>
-        <option value="México">México</option>
-        <option value="Perú">Perú</option>
-      </select>
-      <input type="number" name="num_vendedores" class="form-input" placeholder="Número de vendedores en el equipo" min="1">
-      <select name="crm_actual" class="form-input">
-        <option value="">CRM actual (opcional)</option>
-        <option value="HubSpot">HubSpot</option>
-        <option value="Salesforce">Salesforce</option>
-        <option value="Pipedrive">Pipedrive</option>
-        <option value="Zoho">Zoho</option>
-        <option value="Otro">Otro</option>
-        <option value="Ninguno">Ninguno</option>
-      </select>
-      <textarea name="desafio" class="form-input" placeholder="Principal desafío comercial que necesitas resolver..." required></textarea>
-      
-      <button type="submit" class="submit-btn">Solicitar reunión estratégica →</button>
-    </form>
-  </div>
-</div>
-</body>
-</html>`);
-});
-
-// ── STATIC (production) or VITE DEV ────────────────────────────────
-async function start() {
-  if (isProd || existsSync(join(__dirname, "dist"))) {
-    const { default: sirv } = await import("sirv");
-    app.use(sirv(join(__dirname, "dist"), { single: true }));
-  } else {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  }
-  app.listen(PORT, () => {
-    console.log(`MINERVA running on http://localhost:${PORT}`);
-  });
+// ── FIRMA HMAC-SHA256 (requerida por Flow) ────────────────────────────────────
+function signParams(params) {
+  const sorted = Object.keys(params).sort();
+  const chain  = sorted.map(k => `${k}${params[k]}`).join("");
+  const sig    = crypto.createHmac("sha256", FLOW_SECRET_KEY).update(chain).digest("hex");
+  return { ...params, s: sig };
 }
 
-start();
+async function flowPost(endpoint, params) {
+  const signed = signParams({ apiKey: FLOW_API_KEY, ...params });
+  const body   = new URLSearchParams(signed).toString();
+
+  const res = await fetch(`${FLOW_BASE_URL}/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Flow ${endpoint} error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+async function flowGet(endpoint, params) {
+  const signed = signParams({ apiKey: FLOW_API_KEY, ...params });
+  const qs     = new URLSearchParams(signed).toString();
+  const res    = await fetch(`${FLOW_BASE_URL}/${endpoint}?${qs}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Flow GET ${endpoint} error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+// ── SUPABASE REST ─────────────────────────────────────────────────────────────
+async function supabaseInsert(table, data) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: "POST",
+    headers: {
+      apikey:         SUPABASE_ANON,
+      Authorization:  `Bearer ${SUPABASE_ANON}`,
+      "Content-Type": "application/json",
+      Prefer:         "return=representation",
+    },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+async function supabaseUpdate(table, filter, data) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${filter}`, {
+    method: "PATCH",
+    headers: {
+      apikey:         SUPABASE_ANON,
+      Authorization:  `Bearer ${SUPABASE_ANON}`,
+      "Content-Type": "application/json",
+      Prefer:         "return=representation",
+    },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+// ── PLAN MAPPING (debe coincidir con lib/constants.ts del frontend) ───────────
+const APP_PLAN_TO_INTERNAL = {
+  starter_monthly:  { plan:"starter",  billing_cycle:"monthly", simulations_limit:20, flow_plan_id: 36287 },
+  starter_annual:   { plan:"starter",  billing_cycle:"annual",  simulations_limit:20, flow_plan_id: 36288 },
+  imperium_monthly: { plan:"imperium", billing_cycle:"monthly", simulations_limit:60, flow_plan_id: 36289 },
+  imperium_annual:  { plan:"imperium", billing_cycle:"annual",  simulations_limit:60, flow_plan_id: 36290 },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RUTAS
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/ping — health check
+ */
+app.get("/api/ping", (req, res) => {
+  res.json({ status: "ok", time: new Date().toISOString() });
+});
+
+/**
+ * POST /api/subscribe
+ * Inicia el flujo de pago en Flow.
+ * Body: { email, name, planId, couponId, appPlanCode, userId }
+ */
+app.post("/api/subscribe", async (req, res) => {
+  const { email, name, planId, couponId, appPlanCode, userId } = req.body;
+
+  if (!email || !planId || !appPlanCode) {
+    return res.status(400).json({ error: "email, planId y appPlanCode son requeridos" });
+  }
+
+  const planConfig = APP_PLAN_TO_INTERNAL[appPlanCode];
+  if (!planConfig) {
+    return res.status(400).json({ error: `Plan desconocido: ${appPlanCode}` });
+  }
+  if (planConfig.flow_plan_id !== Number(planId)) {
+    return res.status(400).json({ error: "El planId no coincide con appPlanCode" });
+  }
+
+  console.log("SUBSCRIBE REQUEST:", { email, appPlanCode, planId, couponId });
+
+  try {
+    // Paso 1: registrar al cliente en Flow (createCustomer)
+    let customerId;
+    try {
+      const customer = await flowPost("customer/create", {
+        email,
+        name: name || email,
+        externalId: userId || email,
+      });
+      customerId = customer.customerId;
+      console.log("FLOW CUSTOMER CREATED:", customerId);
+    } catch (err) {
+      // Si ya existe, lo buscamos
+      try {
+        const existing = await flowGet("customer/getByEmail", { email });
+        customerId = existing.customerId;
+        console.log("FLOW CUSTOMER EXISTING:", customerId);
+      } catch (innerErr) {
+        console.error("FLOW CUSTOMER ERROR:", err);
+        return res.status(500).json({ error: "No pudimos registrar el cliente en Flow" });
+      }
+    }
+
+    // Paso 2: crear suscripción en Flow
+    const subscriptionParams = {
+      planId: Number(planId),
+      customerId,
+      ...(couponId ? { couponId: Number(couponId) } : {}),
+    };
+
+    const subscription = await flowPost("subscription/create", subscriptionParams);
+    console.log("FLOW SUBSCRIPTION CREATED:", subscription);
+
+    // Flow devuelve la suscripción con un paymentLink para el primer cobro
+    // Si tiene payment_link → redirigir al usuario
+    if (subscription.payment_link) {
+      // Guardar registro pendiente en BD para correlacionar después
+      await supabaseInsert("payments", {
+        email,
+        amount:         subscription.amount || 0,
+        status:         "pending",
+        commerce_order: subscription.subscriptionId || `sub_${Date.now()}`,
+        plan_code:      appPlanCode,
+        flow_subscription_id: subscription.subscriptionId,
+        coupon_used:    couponId ? `coupon_${couponId}` : null,
+        created_at:     new Date().toISOString(),
+      }).catch(err => console.error("ERROR INSERT PAYMENT:", err));
+
+      return res.json({ paymentUrl: subscription.payment_link });
+    }
+
+    // Si no tiene payment_link, la suscripción ya está activa (sin pago inicial)
+    return res.json({
+      paymentUrl: `${APP_URL}/api/payment/return?subscription_id=${subscription.subscriptionId}`,
+      subscriptionId: subscription.subscriptionId
+    });
+
+  } catch (err) {
+    console.error("ERROR EN SUBSCRIBE:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/payment/confirm
+ * Callback que Flow llama después de cada cobro (server-to-server).
+ * Siempre debe responder HTTP 200 o Flow reintentará.
+ */
+app.post("/api/payment/confirm", async (req, res) => {
+  const token = req.body?.token || req.query?.token;
+  console.log("FLOW CALLBACK RECEIVED:", req.method, { token });
+
+  if (!token) return res.status(200).send("OK"); // Flow espera 200 siempre
+
+  try {
+    const status = await flowGet("payment/getStatus", { token });
+    console.log("FLOW STATUS:", status);
+
+    /* status.status: 1=pendiente, 2=pagado, 3=rechazado, 4=anulado */
+    if (status.status === 2) {
+      const email         = status.payer;
+      const amount        = status.amount;
+      const commerceOrder = status.commerceOrder;
+
+      // Idempotencia: verificar si ya procesamos este commerce_order
+      const existing = await fetch(
+        `${SUPABASE_URL}/rest/v1/payments?commerce_order=eq.${encodeURIComponent(commerceOrder)}&status=eq.paid&select=id&limit=1`,
+        { headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } }
+      ).then(r => r.json()).catch(() => []);
+
+      if (Array.isArray(existing) && existing.length > 0) {
+        console.log("PAGO YA PROCESADO:", commerceOrder);
+        return res.status(200).send("OK");
+      }
+
+      // Marcar pago como pagado
+      await supabaseUpdate(
+        "payments",
+        `commerce_order=eq.${encodeURIComponent(commerceOrder)}`,
+        { status: "paid", paid_at: new Date().toISOString(), amount }
+      ).catch(err => {
+        // Si el UPDATE no encuentra el registro previo, hacemos INSERT
+        return supabaseInsert("payments", {
+          email,
+          amount,
+          status: "paid",
+          commerce_order: commerceOrder,
+          paid_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        });
+      });
+
+      console.log("PAGO CONFIRMADO:", email, amount);
+      sendPaymentReceiptEmail(email, amount).catch(console.error);
+    }
+
+    return res.status(200).send("OK");
+  } catch (err) {
+    console.error("ERROR EN CONFIRM:", err);
+    return res.status(200).send("OK"); // siempre 200 a Flow
+  }
+});
+
+/**
+ * GET /api/payment/confirm  — Redirect del navegador post-pago
+ */
+app.get("/api/payment/confirm", async (req, res) => {
+  const token = req.query?.token;
+  if (!token) return res.redirect(APP_URL);
+
+  try {
+    const status = await flowGet("payment/getStatus", { token });
+    if (status.status === 2) {
+      return res.redirect(`${APP_URL}/?payment=success`);
+    }
+    return res.redirect(`${APP_URL}/?payment=failed`);
+  } catch {
+    return res.redirect(`${APP_URL}/?payment=error`);
+  }
+});
+
+/**
+ * GET /api/payment/return  — Redirect cuando Flow ya autorizó la suscripción
+ */
+app.get("/api/payment/return", (req, res) => {
+  return res.redirect(`${APP_URL}/?payment=return`);
+});
+
+/**
+ * POST /api/quote-request
+ * Recibe solicitud de cotización Pyme/Enterprise.
+ * Guarda en Supabase + envía email al equipo de ventas y al cliente.
+ */
+app.post("/api/quote-request", async (req, res) => {
+  const {
+    full_name, email, empresa, pais, telefono, cargo,
+    plan_requested, team_size, use_case, message, user_id
+  } = req.body;
+
+  if (!full_name || !email || !empresa || !plan_requested) {
+    return res.status(400).json({ error: "full_name, email, empresa y plan_requested son requeridos" });
+  }
+  if (!["pyme","enterprise"].includes(plan_requested)) {
+    return res.status(400).json({ error: "plan_requested debe ser pyme o enterprise" });
+  }
+
+  console.log("QUOTE REQUEST:", { email, empresa, plan_requested });
+
+  try {
+    // Guardar en Supabase
+    const inserted = await supabaseInsert("quote_requests", {
+      user_id: user_id || null,
+      email,
+      full_name,
+      empresa,
+      pais: pais || null,
+      telefono: telefono || null,
+      cargo: cargo || null,
+      plan_requested,
+      team_size: team_size || null,
+      use_case: use_case || null,
+      message: message || null,
+      status: "new",
+    });
+
+    // Email al equipo de ventas
+    sendSalesNotificationEmail({
+      full_name, email, empresa, pais, telefono, cargo,
+      plan_requested, team_size, use_case, message
+    }).catch(console.error);
+
+    // Email de confirmación al cliente
+    sendQuoteConfirmationEmail(email, full_name, plan_requested).catch(console.error);
+
+    return res.json({ ok: true, request_id: inserted?.[0]?.id });
+
+  } catch (err) {
+    console.error("ERROR EN QUOTE REQUEST:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// EMAILS
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function sendPaymentReceiptEmail(email, amount) {
+  await transporter.sendMail({
+    from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
+    to:      email,
+    subject: "Pago confirmado · MINERVA Deal Engine",
+    html: `<p>Hola,</p>
+           <p>Tu pago de $${amount?.toLocaleString("es-CL") || "—"} CLP fue confirmado.</p>
+           <p><a href="${APP_URL}">Ingresar a MINERVA →</a></p>`,
+  });
+  console.log("EMAIL DE PAGO ENVIADO:", email);
+}
+
+async function sendSalesNotificationEmail(data) {
+  await transporter.sendMail({
+    from:    `"MINERVA Sales" <${process.env.SMTP_USER}>`,
+    to:      SALES_EMAIL,
+    subject: `Nueva cotización ${data.plan_requested.toUpperCase()}: ${data.empresa}`,
+    html: `
+      <h2>Nueva solicitud de cotización</h2>
+      <p><strong>Plan:</strong> ${data.plan_requested.toUpperCase()}</p>
+      <hr/>
+      <p><strong>Nombre:</strong> ${data.full_name}</p>
+      <p><strong>Email:</strong> ${data.email}</p>
+      <p><strong>Empresa:</strong> ${data.empresa}</p>
+      <p><strong>Cargo:</strong> ${data.cargo || "—"}</p>
+      <p><strong>País:</strong> ${data.pais || "—"}</p>
+      <p><strong>Teléfono:</strong> ${data.telefono || "—"}</p>
+      <p><strong>Tamaño equipo:</strong> ${data.team_size || "—"}</p>
+      <p><strong>Caso de uso:</strong> ${data.use_case || "—"}</p>
+      <p><strong>Mensaje:</strong></p>
+      <p>${data.message ? data.message.replace(/\n/g,"<br/>") : "—"}</p>
+    `,
+  });
+  console.log("EMAIL DE VENTAS ENVIADO PARA:", data.email);
+}
+
+async function sendQuoteConfirmationEmail(email, name, plan) {
+  const planLabel = plan === "pyme" ? "PYME" : "Enterprise";
+  await transporter.sendMail({
+    from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
+    to:      email,
+    subject: `Recibimos tu solicitud · ${planLabel} MINERVA`,
+    html: `
+      <p>Hola ${name},</p>
+      <p>Gracias por tu interés en MINERVA <strong>${planLabel}</strong>.</p>
+      <p>Recibimos tu solicitud y un consultor se pondrá en contacto contigo en las próximas <strong>24 horas hábiles</strong>.</p>
+      <p>Mientras tanto, puedes seguir explorando MINERVA con el trial gratuito en <a href="${APP_URL}">${APP_URL}</a>.</p>
+      <p>Saludos,<br/>El equipo de MINERVA</p>
+    `,
+  });
+  console.log("EMAIL DE CONFIRMACIÓN ENVIADO A:", email);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SERVIR FRONTEND ESTÁTICO (Vite build)
+// ═════════════════════════════════════════════════════════════════════════════
+app.use(sirv(join(__dirname, "dist"), { single: true }));
+
+// ── SERVIDOR ──────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`MINERVA running on http://localhost:${PORT}`);
+});
