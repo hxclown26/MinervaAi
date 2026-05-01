@@ -106,7 +106,41 @@ export const sb = {
     });
     return r.json();
   },
+  async cancelSubscription(token:string) {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_subscription_at_period_end`, {
+      method:"POST",
+      headers:this.authH(token),
+      body:JSON.stringify({})
+    });
+    return r.json();
+  },
+  async reactivateSubscription(token:string) {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/reactivate_subscription`, {
+      method:"POST",
+      headers:this.authH(token),
+      body:JSON.stringify({})
+    });
+    return r.json();
+  },
+  async submitQuoteRequest(payload:any) {
+    // Endpoint público (no requiere auth) — el server.js lo redirige a Supabase + envía email
+    const r = await fetch("/api/quote-request", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    return r.json();
+  },
+  async startCheckout(payload:any) {
+    const r = await fetch("/api/subscribe", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    return r.json();
+  },
   async saveProfile(token:string, userId:string, profile:any) {
     return this.upsertProfile(token, userId, profile);
   },
 };
+
