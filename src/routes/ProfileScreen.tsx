@@ -18,7 +18,7 @@ import { ExtendModal } from "./profile/ExtendModal";
 
 // ── PROFILE SCREEN ─────────────────────────────────────────────────
 export function ProfileScreen() {
-  const { session, profile, subscription, navigate } = useAuth();
+  const { session, profile, subscription, navigate, refresh } = useAuth();
   const [tab, setTab] = useState<"actividad"|"datos">("actividad");
   const [sims, setSims] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,7 +138,7 @@ export function ProfileScreen() {
             <div style={{background:C.lightCard,border:`1px solid ${C.lightBorder}`,borderRadius:14,padding:"18px 20px",marginBottom:18}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap" as const,gap:6}}>
                 <div style={{fontSize:13,fontWeight:700,color:C.textDark}}>
-                  Progreso al siguiente nivel: {LEVEL_NAMES[levelInfo.level] || "Imparable"}
+                  Progreso al siguiente nivel: {LEVEL_NAMES[levelInfo.level] || "Ascended Minerva"}
                 </div>
                 <div style={{fontSize:11,color:C.textGray,fontFamily:"'JetBrains Mono',monospace"}}>
                   {levelInfo.wins} / {levelInfo.nextAt} wins · {levelInfo.progress}%
@@ -253,14 +253,68 @@ export function ProfileScreen() {
               { label:"País",     value: profile?.pais },
               { label:"Giro",     value: profile?.giro },
               { label:"Plan",     value: planLabel(subscription?.plan) },
+              { label:"Ciclo",    value: subscription?.billing_cycle ? subscription.billing_cycle.toUpperCase() : "—" },
             ].map((f,i)=>(
               <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.lightBorder2}`,fontSize:13}}>
                 <span style={{color:C.textGray,fontFamily:"'JetBrains Mono',monospace",fontSize:11,letterSpacing:".04em"}}>{f.label.toUpperCase()}</span>
                 <span style={{fontWeight:600,color:C.textDark}}>{f.value || "—"}</span>
               </div>
             ))}
+
+            {/* Estado de suscripción */}
+            {subscription && subscription.status === "active" && subscription.billing_cycle !== "trial" && (
+              <div style={{marginTop:18,padding:"14px 16px",background:subscription.cancel_at_period_end?C.error+"08":C.success+"08",border:`1px solid ${subscription.cancel_at_period_end?C.error:C.success}33`,borderRadius:10}}>
+                {subscription.cancel_at_period_end ? (
+                  <>
+                    <div style={{fontSize:12,fontWeight:700,color:C.error,marginBottom:5}}>⚠ Suscripción cancelada</div>
+                    <div style={{fontSize:11,color:C.textGray,lineHeight:1.5}}>
+                      Tu acceso continúa hasta {formatDate(subscription.period_end)}.
+                      Después de esa fecha no podrás simular hasta contratar de nuevo.
+                    </div>
+                    <button
+                      onClick={async()=>{
+                        if (!session?.access_token) return;
+                        if (!confirm("¿Reactivar tu suscripción? Continuará el cobro automático.")) return;
+                        try {
+                          await sb.reactivateSubscription(session.access_token);
+                          await refresh();
+                        } catch { alert("Error al reactivar"); }
+                      }}
+                      style={{marginTop:10,padding:"8px 14px",background:C.success,border:"none",borderRadius:8,fontSize:11,fontWeight:700,color:"#fff",cursor:"pointer",fontFamily:"inherit"}}
+                    >
+                      Reactivar suscripción
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{fontSize:12,fontWeight:700,color:C.success,marginBottom:5}}>✓ Suscripción activa</div>
+                    <div style={{fontSize:11,color:C.textGray,lineHeight:1.5}}>
+                      Próximo cobro: {formatDate(subscription.period_end)}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             <div style={{marginTop:18,display:"flex",gap:10,flexWrap:"wrap" as const}}>
-              <button onClick={()=>navigate("pricing")} style={{padding:"10px 16px",background:"transparent",border:`1px solid ${C.lightBorder}`,borderRadius:8,fontSize:12,cursor:"pointer",fontFamily:"inherit",color:C.textDark,fontWeight:600}}>Gestionar suscripción</button>
+              <button onClick={()=>navigate("pricing")} style={{padding:"10px 16px",background:"transparent",border:`1px solid ${C.lightBorder}`,borderRadius:8,fontSize:12,cursor:"pointer",fontFamily:"inherit",color:C.textDark,fontWeight:600}}>
+                {subscription?.status === "active" && subscription.billing_cycle !== "trial" ? "Cambiar plan" : "Ver planes"}
+              </button>
+              {subscription?.status === "active" && subscription.billing_cycle !== "trial" && !subscription.cancel_at_period_end && (
+                <button
+                  onClick={async()=>{
+                    if (!session?.access_token) return;
+                    if (!confirm(`¿Cancelar tu suscripción ${planLabel(subscription.plan)}?\n\nMantendrás acceso hasta ${formatDate(subscription.period_end)}. No habrá más cobros.`)) return;
+                    try {
+                      await sb.cancelSubscription(session.access_token);
+                      await refresh();
+                    } catch { alert("Error al cancelar. Intenta nuevamente."); }
+                  }}
+                  style={{padding:"10px 16px",background:"transparent",border:`1px solid ${C.error}55`,borderRadius:8,fontSize:12,cursor:"pointer",fontFamily:"inherit",color:C.error,fontWeight:600}}
+                >
+                  Cancelar suscripción
+                </button>
+              )}
             </div>
           </div>
         )}
