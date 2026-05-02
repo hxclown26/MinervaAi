@@ -5,7 +5,7 @@ import { C, PLANS } from "../lib/constants";
 import { planLabel } from "../lib/helpers";
 import { AuthHeader } from "../components/AuthHeader";
 import { QuoteRequestModal } from "./QuoteRequestModal";
- 
+
 export function PricingRoute() {
   const { session, profile, subscription, refresh, navigate } = useAuth();
   const [trialLoading, setTrialLoading] = useState(false);
@@ -13,17 +13,17 @@ export function PricingRoute() {
   const [checkoutLoading, setCheckoutLoading] = useState<string|null>(null);
   const [quoteModal, setQuoteModal] = useState<"pyme"|"enterprise"|null>(null);
   const [billingPref, setBillingPref] = useState<"monthly"|"annual">("monthly");
- 
+
   useEffect(() => {
     if (!session) navigate("login");
     else if (!profile?.profile_completed) navigate("onboarding");
   }, [session, profile]);
- 
+
   if (!session || !profile?.profile_completed) return null;
- 
+
   const hasActiveSubscription = !!subscription && subscription.status === "active";
   const canStartTrial = !hasActiveSubscription;
- 
+
   const startTrial = async () => {
     if (!session?.access_token) return;
     setTrialError(""); setTrialLoading(true);
@@ -41,22 +41,20 @@ export function PricingRoute() {
       setTrialLoading(false);
     }
   };
- 
-  const startCheckout = async (planId:string) => {
+
+  const startCheckout = async (planId:string, couponCode?:string) => {
     if (!session?.user?.email) return;
     setCheckoutLoading(planId);
     try {
-      const plan:any = (PLANS as any)[planId];
       const result = await sb.startCheckout({
         email: session.user.email,
         name: profile?.empresa || session.user.email,
-        planId: plan.flow_plan_id,
-        couponId: plan.coupon_id || null,
         appPlanCode: planId,
         userId: session.user.id,
+        couponCode: couponCode || null,
       });
-      if (result?.registerUrl) {
-        window.location.href = result.registerUrl;
+      if (result?.paymentUrl) {
+        window.location.href = result.paymentUrl;
       } else {
         alert(result?.error || "No pudimos iniciar el pago. Intenta nuevamente.");
         setCheckoutLoading(null);
@@ -66,23 +64,23 @@ export function PricingRoute() {
       setCheckoutLoading(null);
     }
   };
- 
+
   // Tarjetas a mostrar según preferencia mensual/anual
   const visiblePaidPlans = billingPref === "monthly"
     ? [PLANS.starter_monthly, PLANS.imperium_monthly]
     : [PLANS.starter_annual, PLANS.imperium_annual];
- 
+
   return (
     <div style={{minHeight:"100vh",background:`linear-gradient(180deg, ${C.darkBg} 0%, #0F2545 60%)`,fontFamily:"'Plus Jakarta Sans',-apple-system,sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');@keyframes pFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}*{box-sizing:border-box}`}</style>
       <AuthHeader theme="dark"/>
- 
+
       <div style={{padding:"40px 24px 80px"}}>
         <div style={{maxWidth:1100,margin:"0 auto",textAlign:"center" as const}}>
           <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:C.nodeCyan,letterSpacing:".18em",textTransform:"uppercase" as const,marginBottom:12}}>Elige tu plan</div>
           <h1 style={{fontSize:"clamp(28px,4vw,42px)",fontWeight:800,letterSpacing:"-.04em",color:C.textLight,margin:"0 0 10px",lineHeight:1.1}}>Simple, transparente,<br/>sin sorpresas.</h1>
           <p style={{fontSize:15,color:C.textLight,opacity:.5,marginBottom:32}}>Un vendedor que cierra una sola venta adicional al mes paga el plan 50 veces.</p>
- 
+
           {/* Banner Free Trial */}
           {canStartTrial && (
             <div style={{
@@ -121,7 +119,7 @@ export function PricingRoute() {
               >{trialLoading?"Activando...":"Empezar trial gratis →"}</button>
             </div>
           )}
- 
+
           {hasActiveSubscription && (
             <div style={{
               background:"rgba(0,200,150,.08)",
@@ -133,7 +131,7 @@ export function PricingRoute() {
               <button onClick={()=>navigate("dashboard")} style={{marginLeft:10,background:"none",border:"none",color:C.nodeCyan,cursor:"pointer",fontSize:13,fontFamily:"inherit",textDecoration:"underline"}}>Ir al dashboard →</button>
             </div>
           )}
- 
+
           {/* Toggle Mensual / Anual */}
           <div style={{display:"inline-flex",background:"rgba(255,255,255,.06)",border:`1px solid ${C.nodeCyan}33`,borderRadius:980,padding:4,marginBottom:24}}>
             {(["monthly","annual"] as const).map(p => (
@@ -156,20 +154,20 @@ export function PricingRoute() {
               </button>
             ))}
           </div>
- 
+
           {/* Tarjetas de planes pagos (Starter + Imperium) */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))",gap:18,marginBottom:36}}>
             {visiblePaidPlans.map((plan:any)=>(
               <PlanCard
                 key={plan.id}
                 plan={plan}
-                onCheckout={()=>startCheckout(plan.id)}
+                onCheckout={(coupon?:string)=>startCheckout(plan.id, coupon)}
                 loading={checkoutLoading === plan.id}
                 disabled={hasActiveSubscription}
               />
             ))}
           </div>
- 
+
           {/* Tarjetas de cotización (Pyme + Enterprise) */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))",gap:18,marginBottom:24}}>
             {[PLANS.pyme, PLANS.enterprise].map((plan:any)=>(
@@ -180,14 +178,14 @@ export function PricingRoute() {
               />
             ))}
           </div>
- 
+
           <p style={{marginTop:24,fontSize:11,color:"rgba(200,216,240,.4)",fontFamily:"'JetBrains Mono',monospace",lineHeight:1.7}}>
             Precios en USD referenciales. Facturación en CLP equivalente vía Flow. Cancelas cuando quieras.<br/>
             ¿Tienes preguntas? Escríbenos a <a href="mailto:hola@minervadeal.com" style={{color:C.nodeCyan,textDecoration:"none"}}>hola@minervadeal.com</a>
           </p>
         </div>
       </div>
- 
+
       {/* Modal de cotización */}
       {quoteModal && (
         <QuoteRequestModal
@@ -198,13 +196,53 @@ export function PricingRoute() {
     </div>
   );
 }
- 
+
 // ── PLAN CARD (Starter / Imperium) ────────────────────────────────
 function PlanCard({ plan, onCheckout, loading, disabled }:any) {
   const isImperium = plan.id.startsWith("imperium");
   const hasPromo = !!plan.promoUSD;
   const isAnnual = plan.period === "annual";
- 
+  const [showCoupon, setShowCoupon] = useState(false);
+  const [couponInput, setCouponInput] = useState("");
+  const [couponState, setCouponState] = useState<"idle"|"validating"|"valid"|"invalid">("idle");
+  const [couponMsg, setCouponMsg] = useState("");
+  const [couponDiscount, setCouponDiscount] = useState(0);
+  const { session } = useAuth();
+
+  const validateCoupon = async () => {
+    if (!couponInput.trim() || !session?.user?.id) return;
+    setCouponState("validating");
+    setCouponMsg("");
+    try {
+      const res = await fetch("/api/validate-coupon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: couponInput.trim(),
+          userId: session.user.id,
+          planCode: plan.id,
+        }),
+      });
+      const data = await res.json();
+      if (data?.valid) {
+        setCouponState("valid");
+        setCouponDiscount(data.discount_percent || 0);
+        setCouponMsg(`✓ ${data.discount_percent}% OFF · ${data.uses_remaining} uso(s) restante(s)`);
+      } else {
+        setCouponState("invalid");
+        setCouponDiscount(0);
+        setCouponMsg(data?.error || "Código no válido");
+      }
+    } catch {
+      setCouponState("invalid");
+      setCouponMsg("Error validando el código");
+    }
+  };
+
+  const handleCheckout = () => {
+    onCheckout(couponState === "valid" ? couponInput.trim() : undefined);
+  };
+
   return (
     <div style={{
       background: isImperium
@@ -227,24 +265,37 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
           fontFamily:"'JetBrains Mono',monospace"
         }}>{plan.badge.toUpperCase()}</div>
       )}
- 
+
       <div style={{fontSize:11,color:isImperium?C.nodeCyan:"rgba(200,216,240,.5)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".15em",marginBottom:6}}>
         {plan.name.toUpperCase()}{isAnnual?" · ANUAL":""}
       </div>
       <div style={{fontSize:13,color:"rgba(200,216,240,.7)",marginBottom:18,lineHeight:1.4}}>{plan.tagline}</div>
- 
+
       <div style={{marginBottom:20,minHeight:80}}>
-        {hasPromo ? (
+        {couponState === "valid" ? (
+          // Mostrar precio con descuento aplicado
           <>
             <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:4}}>
-              <span style={{fontSize:32,fontWeight:800,color:C.textLight,letterSpacing:"-.03em"}}>${plan.promoUSD}</span>
+              <span style={{fontSize:32,fontWeight:800,color:C.gold,letterSpacing:"-.03em"}}>
+                ${Math.round((isAnnual ? plan.priceCLP : plan.priceCLP) * (1 - couponDiscount/100)).toLocaleString("es-CL")}
+              </span>
+              <span style={{fontSize:13,color:"rgba(200,216,240,.5)"}}>CLP</span>
+            </div>
+            <div style={{fontSize:11,color:C.gold,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".04em"}}>
+              {couponDiscount}% OFF aplicado · era ${plan.priceCLP.toLocaleString("es-CL")}
+            </div>
+          </>
+        ) : hasPromo ? (
+          <>
+            <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:4}}>
+              <span style={{fontSize:32,fontWeight:800,color:C.textLight,letterSpacing:"-.03em"}}>${plan.priceUSD}</span>
               <span style={{fontSize:13,color:"rgba(200,216,240,.5)"}}>USD/mes</span>
             </div>
             <div style={{fontSize:11,color:C.gold,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".04em"}}>
-              50% OFF × {plan.promoMonths} meses · luego ${plan.priceUSD}/mes
+              Con código <strong>{plan.coupon_code}</strong>: 50% OFF × {plan.promoMonths} meses
             </div>
             <div style={{fontSize:10,color:"rgba(200,216,240,.4)",marginTop:4}}>
-              ≈ ${plan.promoCLP.toLocaleString("es-CL")} CLP/mes (luego ${plan.priceCLP.toLocaleString("es-CL")} CLP)
+              ≈ ${plan.priceCLP.toLocaleString("es-CL")} CLP/mes
             </div>
           </>
         ) : (
@@ -262,8 +313,8 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
           </>
         )}
       </div>
- 
-      <ul style={{listStyle:"none",padding:0,margin:"0 0 22px",fontSize:12,color:"rgba(200,216,240,.85)",lineHeight:1.7}}>
+
+      <ul style={{listStyle:"none",padding:0,margin:"0 0 18px",fontSize:12,color:"rgba(200,216,240,.85)",lineHeight:1.7}}>
         {plan.features.map((f:string,i:number)=>(
           <li key={i} style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:6}}>
             <span style={{color:isImperium?C.nodeCyan:C.success,flexShrink:0,marginTop:1}}>✓</span>
@@ -271,9 +322,72 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
           </li>
         ))}
       </ul>
- 
+
+      {/* Sección de cupón (solo para mensuales con promo) */}
+      {hasPromo && plan.coupon_code && (
+        <div style={{marginBottom:14}}>
+          {!showCoupon ? (
+            <button
+              onClick={()=>setShowCoupon(true)}
+              style={{
+                background:"none", border:"none",
+                color:C.gold, fontSize:11, fontWeight:600,
+                cursor:"pointer", fontFamily:"inherit",
+                padding:"6px 0", textAlign:"left" as const, width:"100%"
+              }}
+            >
+              ¿Tienes un código de bienvenida? →
+            </button>
+          ) : (
+            <div style={{padding:"10px 12px",background:"rgba(255,193,7,.06)",border:`1px solid ${C.gold}33`,borderRadius:8}}>
+              <div style={{fontSize:10,color:C.gold,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".1em",marginBottom:6}}>CÓDIGO DE DESCUENTO</div>
+              <div style={{display:"flex",gap:6}}>
+                <input
+                  type="text"
+                  value={couponInput}
+                  onChange={(e:any)=>{setCouponInput(e.target.value);setCouponState("idle");setCouponMsg("");}}
+                  placeholder={plan.coupon_code}
+                  disabled={couponState === "validating"}
+                  style={{
+                    flex:1,
+                    padding:"7px 10px",
+                    background:"rgba(255,255,255,.05)",
+                    border:`1px solid ${couponState==="valid"?C.success:couponState==="invalid"?C.error:C.gold+"55"}`,
+                    borderRadius:6,
+                    fontSize:11,
+                    color:C.textLight,
+                    outline:"none",
+                    fontFamily:"inherit"
+                  }}
+                />
+                <button
+                  onClick={validateCoupon}
+                  disabled={!couponInput.trim() || couponState === "validating"}
+                  style={{
+                    padding:"7px 12px",
+                    background:couponState==="valid"?C.success:C.gold,
+                    border:"none",borderRadius:6,
+                    fontSize:11,fontWeight:700,
+                    color:"#000",cursor:"pointer",
+                    fontFamily:"inherit",
+                    whiteSpace:"nowrap" as const
+                  }}
+                >
+                  {couponState === "validating" ? "..." : couponState === "valid" ? "✓" : "Aplicar"}
+                </button>
+              </div>
+              {couponMsg && (
+                <div style={{marginTop:6,fontSize:10,color:couponState==="valid"?C.success:C.error,fontFamily:"'JetBrains Mono',monospace"}}>
+                  {couponMsg}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <button
-        onClick={onCheckout}
+        onClick={handleCheckout}
         disabled={loading || disabled}
         style={{
           width:"100%",
@@ -294,7 +408,7 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
     </div>
   );
 }
- 
+
 // ── QUOTE PLAN CARD (Pyme / Enterprise) ───────────────────────────
 function QuotePlanCard({ plan, onRequest }:any) {
   return (
@@ -309,14 +423,14 @@ function QuotePlanCard({ plan, onRequest }:any) {
         {plan.name}
       </div>
       <div style={{fontSize:13,color:"rgba(200,216,240,.7)",marginBottom:18,lineHeight:1.4}}>{plan.tagline}</div>
- 
+
       <div style={{marginBottom:18,minHeight:80,display:"flex",alignItems:"center"}}>
         <div>
           <div style={{fontSize:24,fontWeight:800,color:C.textLight,letterSpacing:"-.02em",marginBottom:4}}>A medida</div>
           <div style={{fontSize:11,color:"rgba(200,216,240,.5)",fontFamily:"'JetBrains Mono',monospace"}}>Conversamos tu caso</div>
         </div>
       </div>
- 
+
       <ul style={{listStyle:"none",padding:0,margin:"0 0 22px",fontSize:12,color:"rgba(200,216,240,.85)",lineHeight:1.7}}>
         {plan.features.map((f:string,i:number)=>(
           <li key={i} style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:6}}>
@@ -325,7 +439,7 @@ function QuotePlanCard({ plan, onRequest }:any) {
           </li>
         ))}
       </ul>
- 
+
       <button
         onClick={onRequest}
         style={{
