@@ -19,11 +19,20 @@ const FLOW_API_KEY    = process.env.FLOW_API_KEY;
 const FLOW_SECRET_KEY = process.env.FLOW_SECRET_KEY;
 const FLOW_BASE_URL   = "https://www.flow.cl/api";
 
-const SUPABASE_URL  = process.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON = process.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL          = process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON         = process.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const APP_URL     = process.env.APP_URL     || "https://app.minervadeal.com";
 const SALES_EMAIL = process.env.SALES_EMAIL || "hola@minervadeal.com";
+
+// ── PLAN MAPPING (debe coincidir con lib/constants.ts del frontend) ───────────
+const APP_PLAN_TO_INTERNAL = {
+  starter_monthly:  { plan:"starter",  billing_cycle:"monthly", simulations_limit:20, amount_clp: 32700  },
+  starter_annual:   { plan:"starter",  billing_cycle:"annual",  simulations_limit:20, amount_clp: 163800 },
+  imperium_monthly: { plan:"imperium", billing_cycle:"monthly", simulations_limit:60, amount_clp: 63700  },
+  imperium_annual:  { plan:"imperium", billing_cycle:"annual",  simulations_limit:60, amount_clp: 364000 },
+};
 
 // ── NODEMAILER ────────────────────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
@@ -45,30 +54,23 @@ async function flowPost(endpoint, params) {
   const signed = signParams({ apiKey: FLOW_API_KEY, ...params });
   const body   = new URLSearchParams(signed).toString();
 
-  console.log(`FLOW POST → ${endpoint} | PARAMS:`, JSON.stringify(params));
-
   const res = await fetch(`${FLOW_BASE_URL}/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
 
-  const responseText = await res.text();
-  console.log(`FLOW RESPONSE [${res.status}] ${endpoint}:`, responseText);
-
   if (!res.ok) {
-    throw new Error(`Flow ${endpoint} error ${res.status}: ${responseText}`);
+    const text = await res.text();
+    throw new Error(`Flow ${endpoint} error ${res.status}: ${text}`);
   }
-  return JSON.parse(responseText);
+  return res.json();
 }
 
 async function flowGet(endpoint, params) {
   const signed = signParams({ apiKey: FLOW_API_KEY, ...params });
   const qs     = new URLSearchParams(signed).toString();
-
-  console.log(`FLOW GET → ${endpoint} | PARAMS:`, JSON.stringify(params));
-
-  const res = await fetch(`${FLOW_BASE_URL}/${endpoint}?${qs}`);
+  const res    = await fetch(`${FLOW_BASE_URL}/${endpoint}?${qs}`);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Flow GET ${endpoint} error ${res.status}: ${text}`);
@@ -77,12 +79,17 @@ async function flowGet(endpoint, params) {
 }
 
 // ── SUPABASE REST ─────────────────────────────────────────────────────────────
-async function supabaseInsert(table, data) {
+// Para queries de lectura/escritura que respeten RLS usamos ANON.
+// Para inserciones críticas server-side (activar suscripción del usuario, registrar cupón)
+// usamos SERVICE_ROLE.
+
+async function supabaseInsert(table, data, useServiceRole = false) {
+  const key = useServiceRole ? SUPABASE_SERVICE_ROLE : SUPABASE_ANON;
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: "POST",
     headers: {
-      apikey:         SUPABASE_ANON,
-      Authorization:  `Bearer ${SUPABASE_ANON}`,
+      apikey:         key,
+      Authorization:  `Bearer ${key}`,
       "Content-Type": "application/json",
       Prefer:         "return=representation",
     },
@@ -91,12 +98,13 @@ async function supabaseInsert(table, data) {
   return res.json();
 }
 
-async function supabaseUpdate(table, filter, data) {
+async function supabaseUpdate(table, filter, data, useServiceRole = false) {
+  const key = useServiceRole ? SUPABASE_SERVICE_ROLE : SUPABASE_ANON;
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${filter}`, {
     method: "PATCH",
     headers: {
-      apikey:         SUPABASE_ANON,
-      Authorization:  `Bearer ${SUPABASE_ANON}`,
+      apikey:         key,
+      Authorization:  `Bearer ${key}`,
       "Content-Type": "application/json",
       Prefer:         "return=representation",
     },
@@ -105,136 +113,152 @@ async function supabaseUpdate(table, filter, data) {
   return res.json();
 }
 
-// ── PLAN MAPPING ──────────────────────────────────────────────────────────────
-const APP_PLAN_TO_INTERNAL = {
-  starter_monthly:  { plan:"starter",  billing_cycle:"monthly", simulations_limit:20, flow_plan_id: 36287 },
-  starter_annual:   { plan:"starter",  billing_cycle:"annual",  simulations_limit:20, flow_plan_id: 36288 },
-  imperium_monthly: { plan:"imperium", billing_cycle:"monthly", simulations_limit:60, flow_plan_id: 36289 },
-  imperium_annual:  { plan:"imperium", billing_cycle:"annual",  simulations_limit:60, flow_plan_id: 36290 },
-};
-
-// ── HELPER: obtener o crear cliente en Flow ───────────────────────────────────
-async function getOrCreateFlowCustomer(email, name, userId) {
-  // 1. Intentar crear
-  try {
-    const customer = await flowPost("customer/create", {
-      email,
-      name: name || email,
-      externalId: userId || email,
-    });
-    console.log("FLOW CUSTOMER CREATED:", customer.customerId);
-    return customer.customerId;
-  } catch (err) {
-    console.log("customer/create falló:", err.message);
-  }
-
-  // 2. Buscar por email (Flow usa su propio customerId, no el externalId)
-  try {
-    const byEmail = await flowGet("customer/getByEmail", { email });
-    console.log("FLOW CUSTOMER BY EMAIL:", byEmail.customerId);
-    return byEmail.customerId;
-  } catch (emailErr) {
-    console.log("getByEmail falló:", emailErr.message);
-  }
-
-  // 3. Fallback: crear con externalId único para evitar colisión
-  try {
-    const fallbackId = `${userId || email}_${Date.now()}`;
-    const customer2 = await flowPost("customer/create", {
-      email,
-      name: name || email,
-      externalId: fallbackId,
-    });
-    console.log("FLOW CUSTOMER CREATED (fallback):", customer2.customerId);
-    return customer2.customerId;
-  } catch (fallbackErr) {
-    console.error("FLOW CUSTOMER ERROR FINAL:", fallbackErr.message);
-    throw new Error("No pudimos registrar el cliente en Flow");
-  }
+async function supabaseRpc(fnName, args, useServiceRole = false) {
+  const key = useServiceRole ? SUPABASE_SERVICE_ROLE : SUPABASE_ANON;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fnName}`, {
+    method: "POST",
+    headers: {
+      apikey:         key,
+      Authorization:  `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(args),
+  });
+  return res.json();
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RUTAS
 // ═════════════════════════════════════════════════════════════════════════════
 
-// GET /api/ping — health check
-app.get("/api/ping", (req, res) => {
+/**
+ * GET /api/ping
+ */
+app.get("/api/ping", (_req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FLUJO DE SUSCRIPCIÓN FLOW (según documentación oficial):
-//
-//  1. POST /api/subscribe
-//     → Crea/recupera cliente en Flow
-//     → Llama customer/register → obtiene URL para registrar tarjeta
-//     → Guarda pending_card en Supabase
-//     → Devuelve { registerUrl } → frontend redirige al usuario a Flow
-//
-//  2. Usuario ingresa tarjeta en portal Flow
-//     → Flow hace POST a /api/card/confirm con el token
-//     → Server llama customer/getRegisterStatus
-//     → Si tarjeta ok → llama subscription/create
-//     → Actualiza Supabase con suscripción activa
-//
-//  3. GET /api/card/return — redirect navegador post-registro
-//     → Redirige al frontend con ?payment=success o ?payment=failed
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * POST /api/validate-coupon
+ * Body: { code, userId, planCode }
+ * Devuelve { valid, discount_percent, final_amount, error?... }
+ */
+app.post("/api/validate-coupon", async (req, res) => {
+  const { code, userId, planCode } = req.body;
+  if (!code || !userId || !planCode) {
+    return res.status(400).json({ valid: false, error: "Faltan datos" });
+  }
+  const planConfig = APP_PLAN_TO_INTERNAL[planCode];
+  if (!planConfig) {
+    return res.status(400).json({ valid: false, error: "Plan inválido" });
+  }
+  try {
+    const result = await supabaseRpc("validate_coupon", {
+      p_code: code,
+      p_user_id: userId,
+      p_plan_code: planCode,
+      p_original_amount: planConfig.amount_clp,
+    }, true);
+    return res.json(result);
+  } catch (err) {
+    console.error("VALIDATE COUPON ERROR:", err);
+    return res.status(500).json({ valid: false, error: "Error validando cupón" });
+  }
+});
 
 /**
  * POST /api/subscribe
- * Body: { email, name, planId, couponId, appPlanCode, userId }
- * Responde: { registerUrl }
+ * Body: { email, name, appPlanCode, userId, couponCode? }
+ * Crea un pago único en Flow, aplicando descuento si el cupón es válido.
  */
 app.post("/api/subscribe", async (req, res) => {
-  const { email, name, planId, couponId, appPlanCode, userId } = req.body;
+  const { email, name, appPlanCode, userId, couponCode } = req.body;
 
-  console.log("SUBSCRIBE BODY:", JSON.stringify(req.body));
-  console.log("FLOW_API_KEY definida:", !!FLOW_API_KEY);
-  console.log("FLOW_SECRET_KEY definida:", !!FLOW_SECRET_KEY);
-
-  if (!email || !planId || !appPlanCode) {
-    return res.status(400).json({ error: "email, planId y appPlanCode son requeridos" });
+  if (!email || !appPlanCode || !userId) {
+    return res.status(400).json({ error: "email, appPlanCode y userId son requeridos" });
   }
 
   const planConfig = APP_PLAN_TO_INTERNAL[appPlanCode];
   if (!planConfig) {
     return res.status(400).json({ error: `Plan desconocido: ${appPlanCode}` });
   }
-  if (planConfig.flow_plan_id !== Number(planId)) {
-    return res.status(400).json({ error: "El planId no coincide con appPlanCode" });
+
+  let amount = planConfig.amount_clp;
+  let appliedCoupon = null;
+
+  // Si hay cupón, validarlo y aplicar descuento
+  if (couponCode) {
+    try {
+      const validation = await supabaseRpc("validate_coupon", {
+        p_code: couponCode,
+        p_user_id: userId,
+        p_plan_code: appPlanCode,
+        p_original_amount: amount,
+      }, true);
+
+      if (validation?.valid) {
+        amount = validation.final_amount;
+        appliedCoupon = validation.code;
+        console.log(`COUPON APPLIED: ${couponCode} → ${amount} CLP`);
+      } else {
+        // Cupón inválido: no se aplica descuento, se cobra precio normal
+        console.log(`COUPON REJECTED: ${couponCode} → ${validation?.error}`);
+      }
+    } catch (err) {
+      console.error("COUPON VALIDATION ERROR:", err);
+      // No bloqueamos el checkout si falla la validación, simplemente cobramos full
+    }
   }
 
-  try {
-    // Paso 1: obtener customerId en Flow
-    const customerId = await getOrCreateFlowCustomer(email, name, userId);
+  console.log("SUBSCRIBE:", { email, appPlanCode, amount, appliedCoupon });
 
-    // Paso 2: iniciar registro de tarjeta (requerido antes de subscription/create)
-    const registerResult = await flowPost("customer/register", {
-      customerId,
-      url_return: `${APP_URL}/api/card/return`,
+  try {
+    const commerceOrder = `${appPlanCode}_${userId.slice(0,8)}_${Date.now()}`;
+    const planConfigKey = appPlanCode;
+
+    // Subject del pago
+    const subject = `MINERVA ${planConfig.plan.toUpperCase()} ${planConfig.billing_cycle === "annual" ? "Anual" : "Mensual"}`;
+
+    // Optional fields para guardar info que recuperamos en confirm
+    const optional = JSON.stringify({
+      app_plan_code: planConfigKey,
+      user_id: userId,
+      coupon_code: appliedCoupon,
+      original_amount: planConfig.amount_clp,
     });
 
-    console.log("FLOW REGISTER RESULT:", JSON.stringify(registerResult));
+    const payment = await flowPost("payment/create", {
+      commerceOrder,
+      subject,
+      currency: "CLP",
+      amount,
+      email,
+      optional,
+      urlConfirmation: `${APP_URL}/api/payment/confirm`,
+      urlReturn:       `${APP_URL}/api/payment/return`,
+    });
 
-    // URL de redirección: url + "?token=" + token (según docs Flow)
-    const registerUrl = `${registerResult.url}?token=${registerResult.token}`;
+    console.log("FLOW payment/create:", payment);
 
-    // Guardar pendiente en Supabase para correlacionar cuando llegue el callback
+    // Guardar registro pendiente
     await supabaseInsert("payments", {
       email,
-      amount:         0,
-      status:         "pending_card",
-      commerce_order: `reg_${registerResult.token}`,
-      plan_code:      appPlanCode,
-      flow_plan_id:   Number(planId),
-      customer_id:    customerId,
-      coupon_id:      couponId ? Number(couponId) : null,
-      user_id:        userId || null,
-      created_at:     new Date().toISOString(),
-    }).catch(err => console.error("ERROR INSERT PAYMENT PENDING:", err));
+      user_id: userId,
+      amount,
+      original_amount: planConfig.amount_clp,
+      status: "pending",
+      commerce_order: commerceOrder,
+      plan_code: planConfigKey,
+      coupon_used: appliedCoupon,
+      created_at: new Date().toISOString(),
+    }, true).catch(err => console.error("ERROR INSERT PAYMENT:", err));
 
-    return res.json({ registerUrl });
+    if (payment.url && payment.token) {
+      const paymentUrl = `${payment.url}?token=${payment.token}`;
+      return res.json({ paymentUrl, finalAmount: amount, appliedCoupon });
+    }
+
+    return res.status(500).json({ error: "Flow no devolvió URL de pago" });
 
   } catch (err) {
     console.error("ERROR EN SUBSCRIBE:", err);
@@ -243,204 +267,161 @@ app.post("/api/subscribe", async (req, res) => {
 });
 
 /**
- * POST /api/card/confirm
- * Callback server-to-server de Flow tras registro de tarjeta.
- * Flow envía: { token }
+ * Handler compartido GET y POST de /api/payment/confirm
  */
-app.post("/api/card/confirm", async (req, res) => {
+async function handlePaymentConfirm(req, res) {
   const token = req.body?.token || req.query?.token;
-  console.log("CARD CONFIRM CALLBACK:", { token });
+  console.log("FLOW CALLBACK:", req.method, { token });
 
-  if (!token) return res.status(200).send("OK");
+  if (!token) {
+    if (req.method === "POST") return res.status(200).send("OK");
+    return res.redirect(APP_URL);
+  }
 
   try {
-    const status = await flowGet("customer/getRegisterStatus", { token });
-    console.log("CARD REGISTER STATUS:", JSON.stringify(status));
+    const status = await flowGet("payment/getStatus", { token });
+    console.log("FLOW STATUS:", status);
 
-    // status 1 = tarjeta registrada exitosamente
-    if (status.status !== 1) {
-      console.log("Tarjeta NO registrada, status:", status.status);
-      return res.status(200).send("OK");
+    if (status.status !== 2) {
+      // Pago no completado
+      if (req.method === "POST") return res.status(200).send("OK");
+      return res.redirect(`${APP_URL}/?payment=failed`);
     }
 
-    const customerId = status.customerId;
+    // Pago confirmado
+    const email         = status.payer;
+    const amount        = status.amount;
+    const commerceOrder = status.commerceOrder;
+    let optional        = {};
+    try { optional = status.optional ? JSON.parse(status.optional) : {}; } catch {}
 
-    // Buscar el plan pendiente en Supabase
-    const pending = await fetch(
-      `${SUPABASE_URL}/rest/v1/payments?commerce_order=eq.reg_${encodeURIComponent(token)}&status=eq.pending_card&select=*&limit=1`,
-      { headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } }
+    const appPlanCode    = optional.app_plan_code;
+    const userId         = optional.user_id;
+    const couponCode     = optional.coupon_code;
+    const originalAmount = optional.original_amount;
+    const planConfig     = appPlanCode ? APP_PLAN_TO_INTERNAL[appPlanCode] : null;
+
+    // Idempotencia: ya procesado?
+    const existing = await fetch(
+      `${SUPABASE_URL}/rest/v1/payments?commerce_order=eq.${encodeURIComponent(commerceOrder)}&status=eq.paid&select=id&limit=1`,
+      { headers: { apikey: SUPABASE_SERVICE_ROLE, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}` } }
     ).then(r => r.json()).catch(() => []);
 
-    if (!Array.isArray(pending) || pending.length === 0) {
-      console.error("No se encontró pago pendiente para token:", token);
-      return res.status(200).send("OK");
+    if (Array.isArray(existing) && existing.length > 0) {
+      console.log("PAGO YA PROCESADO:", commerceOrder);
+      if (req.method === "POST") return res.status(200).send("OK");
+      return res.redirect(`${APP_URL}/?payment=success`);
     }
 
-    const { plan_code, flow_plan_id, coupon_id, email } = pending[0];
-
-    // Paso 3: crear suscripción ahora que la tarjeta está registrada
-    const subscriptionParams = {
-      planId:     flow_plan_id,
-      customerId,
-      ...(coupon_id ? { couponId: coupon_id } : {}),
-    };
-
-    console.log("CREATING SUBSCRIPTION:", JSON.stringify(subscriptionParams));
-
-    const subscription = await flowPost("subscription/create", subscriptionParams);
-    console.log("FLOW SUBSCRIPTION CREATED:", JSON.stringify(subscription));
-
-    // Actualizar Supabase
-    await supabaseUpdate(
+    // Marcar pago como pagado (UPDATE, sino INSERT)
+    const updateRes = await supabaseUpdate(
       "payments",
-      `commerce_order=eq.reg_${encodeURIComponent(token)}`,
-      {
-        status:               "active",
-        flow_subscription_id: subscription.subscriptionId,
-        amount:               subscription.amount || 0,
-        paid_at:              new Date().toISOString(),
-      }
-    ).catch(err => console.error("ERROR UPDATE PAYMENT:", err));
+      `commerce_order=eq.${encodeURIComponent(commerceOrder)}`,
+      { status: "paid", paid_at: new Date().toISOString() },
+      true
+    ).catch(() => null);
 
-    sendPaymentReceiptEmail(email, subscription.amount).catch(console.error);
-
-    return res.status(200).send("OK");
-
-  } catch (err) {
-    console.error("ERROR EN CARD CONFIRM:", err);
-    return res.status(200).send("OK"); // siempre 200 a Flow
-  }
-});
-
-/**
- * GET /api/card/return
- * Redirect del navegador tras registrar tarjeta en Flow.
- */
-app.get("/api/card/return", async (req, res) => {
-  const token = req.query?.token;
-  if (!token) return res.redirect(APP_URL);
-
-  try {
-    const status = await flowGet("customer/getRegisterStatus", { token });
-    console.log("CARD RETURN STATUS:", JSON.stringify(status));
-
-    if (status.status === 1) {
-      return res.redirect(`${APP_URL}/?payment=success`);
+    if (!updateRes || updateRes.length === 0) {
+      await supabaseInsert("payments", {
+        email,
+        user_id: userId || null,
+        amount,
+        original_amount: originalAmount || amount,
+        status: "paid",
+        commerce_order: commerceOrder,
+        plan_code: appPlanCode || null,
+        coupon_used: couponCode || null,
+        paid_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      }, true);
     }
-    return res.redirect(`${APP_URL}/?payment=failed`);
+
+    // Si hay cupón aplicado: registrar uso
+    if (couponCode && userId) {
+      await supabaseRpc("register_coupon_use", {
+        p_code: couponCode,
+        p_user_id: userId,
+        p_email: email,
+        p_plan_code: appPlanCode,
+        p_original_amount: originalAmount,
+        p_final_amount: amount,
+      }, true).catch(err => console.error("ERROR REGISTER COUPON:", err));
+    }
+
+    // Activar suscripción para el usuario (vía RPC)
+    if (planConfig && userId) {
+      // Usamos SERVICE_ROLE para poder activar como ese usuario
+      await fetch(`${SUPABASE_URL}/rest/v1/rpc/activate_paid_subscription`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          p_plan: planConfig.plan,
+          p_billing_cycle: planConfig.billing_cycle,
+          p_simulations_limit: planConfig.simulations_limit,
+          p_flow_subscription_id: commerceOrder,
+          p_coupon_used: couponCode || null,
+          p_coupon_remaining: 0,
+        }),
+      }).then(async r => {
+        const text = await r.text();
+        console.log("ACTIVATE SUBSCRIPTION:", r.status, text);
+      }).catch(err => console.error("ERROR ACTIVATE:", err));
+    }
+
+    sendPaymentReceiptEmail(email, amount, planConfig).catch(console.error);
+
+    if (req.method === "POST") return res.status(200).send("OK");
+    return res.redirect(`${APP_URL}/?payment=success`);
+
   } catch (err) {
-    console.error("ERROR EN CARD RETURN:", err);
+    console.error("ERROR EN CONFIRM:", err);
+    if (req.method === "POST") return res.status(200).send("OK");
     return res.redirect(`${APP_URL}/?payment=error`);
   }
-});
+}
+
+app.post("/api/payment/confirm", handlePaymentConfirm);
+app.get("/api/payment/confirm",  handlePaymentConfirm);
 
 /**
- * POST /api/payment/confirm
- * Callback de Flow para cobros recurrentes de suscripción.
+ * GET /api/payment/return — usuario vuelve a la app
  */
-app.post("/api/payment/confirm", async (req, res) => {
-  const token = req.body?.token || req.query?.token;
-  console.log("PAYMENT CONFIRM CALLBACK:", { token });
-
-  if (!token) return res.status(200).send("OK");
-
-  try {
-    const status = await flowGet("payment/getStatus", { token });
-    console.log("PAYMENT STATUS:", JSON.stringify(status));
-
-    if (status.status === 2) {
-      const email         = status.payer;
-      const amount        = status.amount;
-      const commerceOrder = status.commerceOrder;
-
-      const existing = await fetch(
-        `${SUPABASE_URL}/rest/v1/payments?commerce_order=eq.${encodeURIComponent(commerceOrder)}&status=eq.paid&select=id&limit=1`,
-        { headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } }
-      ).then(r => r.json()).catch(() => []);
-
-      if (Array.isArray(existing) && existing.length > 0) {
-        console.log("PAGO YA PROCESADO:", commerceOrder);
-        return res.status(200).send("OK");
-      }
-
-      await supabaseUpdate(
-        "payments",
-        `commerce_order=eq.${encodeURIComponent(commerceOrder)}`,
-        { status: "paid", paid_at: new Date().toISOString(), amount }
-      ).catch(() => {
-        return supabaseInsert("payments", {
-          email,
-          amount,
-          status:         "paid",
-          commerce_order: commerceOrder,
-          paid_at:        new Date().toISOString(),
-          created_at:     new Date().toISOString(),
-        });
-      });
-
-      console.log("PAGO RECURRENTE CONFIRMADO:", email, amount);
-      sendPaymentReceiptEmail(email, amount).catch(console.error);
-    }
-
-    return res.status(200).send("OK");
-  } catch (err) {
-    console.error("ERROR EN PAYMENT CONFIRM:", err);
-    return res.status(200).send("OK");
-  }
-});
-
-/**
- * GET /api/payment/confirm — Redirect navegador post-pago (compatibilidad)
- */
-app.get("/api/payment/confirm", async (req, res) => {
-  const token = req.query?.token;
-  if (!token) return res.redirect(APP_URL);
-
-  try {
-    const status = await flowGet("payment/getStatus", { token });
-    if (status.status === 2) {
-      return res.redirect(`${APP_URL}/?payment=success`);
-    }
-    return res.redirect(`${APP_URL}/?payment=failed`);
-  } catch {
-    return res.redirect(`${APP_URL}/?payment=error`);
-  }
+app.get("/api/payment/return", (_req, res) => {
+  return res.redirect(`${APP_URL}/?payment=return`);
 });
 
 /**
  * POST /api/quote-request
- * Solicitud de cotización Pyme/Enterprise.
  */
 app.post("/api/quote-request", async (req, res) => {
-  const {
-    full_name, email, empresa, pais, telefono, cargo,
-    plan_requested, team_size, use_case, message, user_id
-  } = req.body;
+  const { full_name, email, empresa, pais, telefono, cargo, plan_requested, team_size, use_case, message, user_id } = req.body;
 
   if (!full_name || !email || !empresa || !plan_requested) {
-    return res.status(400).json({ error: "full_name, email, empresa y plan_requested son requeridos" });
+    return res.status(400).json({ error: "Faltan campos obligatorios" });
   }
   if (!["pyme","enterprise"].includes(plan_requested)) {
-    return res.status(400).json({ error: "plan_requested debe ser pyme o enterprise" });
+    return res.status(400).json({ error: "plan_requested inválido" });
   }
 
   console.log("QUOTE REQUEST:", { email, empresa, plan_requested });
 
   try {
     const inserted = await supabaseInsert("quote_requests", {
-      user_id:        user_id || null,
-      email,
-      full_name,
-      empresa,
-      pais:           pais || null,
-      telefono:       telefono || null,
-      cargo:          cargo || null,
+      user_id: user_id || null,
+      email, full_name, empresa,
+      pais: pais || null,
+      telefono: telefono || null,
+      cargo: cargo || null,
       plan_requested,
-      team_size:      team_size || null,
-      use_case:       use_case || null,
-      message:        message || null,
-      status:         "new",
-    });
+      team_size: team_size || null,
+      use_case: use_case || null,
+      message: message || null,
+      status: "new",
+    }, true);
 
     sendSalesNotificationEmail({ full_name, email, empresa, pais, telefono, cargo, plan_requested, team_size, use_case, message }).catch(console.error);
     sendQuoteConfirmationEmail(email, full_name, plan_requested).catch(console.error);
@@ -457,19 +438,25 @@ app.post("/api/quote-request", async (req, res) => {
 // EMAILS
 // ═════════════════════════════════════════════════════════════════════════════
 
-async function sendPaymentReceiptEmail(email, amount) {
+async function sendPaymentReceiptEmail(email, amount, planConfig) {
+  if (!process.env.SMTP_USER) return;
+  const planLabel = planConfig ? `${planConfig.plan.toUpperCase()} ${planConfig.billing_cycle === "annual" ? "Anual" : "Mensual"}` : "MINERVA";
   await transporter.sendMail({
     from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
     to:      email,
-    subject: "Pago confirmado · MINERVA Deal Engine",
-    html: `<p>Hola,</p>
-           <p>Tu pago de $${amount?.toLocaleString("es-CL") || "—"} CLP fue confirmado.</p>
-           <p><a href="${APP_URL}">Ingresar a MINERVA →</a></p>`,
+    subject: `Pago confirmado · MINERVA ${planLabel}`,
+    html: `<div style="font-family:sans-serif;max-width:520px;margin:auto;padding:30px;background:#0A1628;color:#C8D8F0;border-radius:12px">
+      <h2 style="color:#fff">¡Pago confirmado!</h2>
+      <p>Tu pago de $${amount?.toLocaleString("es-CL") || "—"} CLP fue recibido.</p>
+      <p>Plan: <strong>${planLabel}</strong></p>
+      <p style="margin-top:20px"><a href="${APP_URL}" style="background:#2997FF;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">Ingresar a MINERVA →</a></p>
+    </div>`,
   });
-  console.log("EMAIL DE PAGO ENVIADO:", email);
+  console.log("RECIBO ENVIADO:", email);
 }
 
 async function sendSalesNotificationEmail(data) {
+  if (!process.env.SMTP_USER) return;
   await transporter.sendMail({
     from:    `"MINERVA Sales" <${process.env.SMTP_USER}>`,
     to:      SALES_EMAIL,
@@ -490,10 +477,11 @@ async function sendSalesNotificationEmail(data) {
       <p>${data.message ? data.message.replace(/\n/g,"<br/>") : "—"}</p>
     `,
   });
-  console.log("EMAIL DE VENTAS ENVIADO PARA:", data.email);
+  console.log("EMAIL VENTAS PARA:", data.email);
 }
 
 async function sendQuoteConfirmationEmail(email, name, plan) {
+  if (!process.env.SMTP_USER) return;
   const planLabel = plan === "pyme" ? "PYME" : "Enterprise";
   await transporter.sendMail({
     from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
@@ -502,20 +490,20 @@ async function sendQuoteConfirmationEmail(email, name, plan) {
     html: `
       <p>Hola ${name},</p>
       <p>Gracias por tu interés en MINERVA <strong>${planLabel}</strong>.</p>
-      <p>Recibimos tu solicitud y un consultor se pondrá en contacto contigo en las próximas <strong>24 horas hábiles</strong>.</p>
-      <p>Mientras tanto, puedes seguir explorando MINERVA con el trial gratuito en <a href="${APP_URL}">${APP_URL}</a>.</p>
+      <p>Recibimos tu solicitud y un consultor te contactará en las próximas <strong>24 horas hábiles</strong>.</p>
       <p>Saludos,<br/>El equipo de MINERVA</p>
     `,
   });
-  console.log("EMAIL DE CONFIRMACIÓN ENVIADO A:", email);
+  console.log("CONFIRMACIÓN ENVIADA A:", email);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FRONTEND ESTÁTICO
+// SERVIR FRONTEND ESTÁTICO (Vite build)
 // ═════════════════════════════════════════════════════════════════════════════
 app.use(sirv(join(__dirname, "dist"), { single: true }));
 
+// ── SERVIDOR ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`MINERVA running on http://localhost:${PORT}`);
+  console.log(`MINERVA running on http://localhost:${PORT} — APP_URL=${APP_URL}`);
 });
