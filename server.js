@@ -470,97 +470,290 @@ app.post("/api/quote-request", async (req, res) => {
 // EMAILS
 // ═════════════════════════════════════════════════════════════════════════════
 
+// Helper: layout base reutilizable para todos los emails
+function emailLayout({ preheader, contentHtml }) {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MINERVA</title>
+</head>
+<body style="margin:0;padding:0;background:#040D1A;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <span style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden">${preheader || ""}</span>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#040D1A;padding:40px 16px">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background:linear-gradient(180deg,#0A1628 0%,#091428 100%);border:1px solid rgba(11,72,148,.5);border-radius:16px;overflow:hidden">
+
+        <!-- Header con gradiente y logo -->
+        <tr><td style="padding:36px 40px 28px;background:linear-gradient(135deg,rgba(0,168,255,.08) 0%,rgba(255,193,7,.04) 100%);border-bottom:1px solid rgba(0,168,255,.15)">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td style="font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:700;color:#FFFFFF;letter-spacing:.04em">MINERVA</td>
+              <td align="right" style="font-family:'Courier New',monospace;font-size:9px;color:#00A8FF;letter-spacing:.25em">DEAL · ENGINE</td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <!-- Body content -->
+        <tr><td style="padding:36px 40px 32px;color:#C8D8F0;font-size:14px;line-height:1.6">
+          ${contentHtml}
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:20px 40px 24px;background:rgba(0,0,0,.2);border-top:1px solid rgba(0,168,255,.1);text-align:center">
+          <p style="margin:0 0 6px;font-family:'Courier New',monospace;font-size:9px;color:#FFC107;letter-spacing:.2em">SAPIENTIA · VICTORIA</p>
+          <p style="margin:0;font-size:11px;color:#3A5070">
+            MINERVA Deal Engine · <a href="https://minervadeal.com" style="color:#3A5070;text-decoration:none">minervadeal.com</a>
+          </p>
+        </td></tr>
+
+      </table>
+      <p style="margin:18px 0 0;font-size:10px;color:#2A3D5C;text-align:center">
+        Recibiste este correo porque interactuaste con MINERVA. Si no fuiste tú, simplemente ignóralo.
+      </p>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+// 1) RECIBO DE PAGO
 async function sendPaymentReceiptEmail(email, amount, planConfig) {
   if (!process.env.SMTP_USER) return;
-  const planLabel = planConfig ? `${planConfig.plan.toUpperCase()} ${planConfig.billing_cycle === "annual" ? "Anual" : "Mensual"}` : "MINERVA";
+  const planName    = planConfig?.plan === "imperium" ? "Imperium" : "Starter";
+  const cycleLabel  = planConfig?.billing_cycle === "annual" ? "Anual" : "Mensual";
+  const fullLabel   = `${planName} ${cycleLabel}`;
+  const amountFmt   = amount?.toLocaleString("es-CL") || "—";
+  const today       = new Date().toLocaleDateString("es-CL", { day:"numeric", month:"long", year:"numeric" });
+
+  const content = `
+    <p style="margin:0 0 6px;font-family:'Courier New',monospace;font-size:10px;color:#00A8FF;letter-spacing:.2em">PAGO CONFIRMADO</p>
+    <h1 style="margin:0 0 16px;font-size:26px;font-weight:700;color:#FFFFFF;letter-spacing:-.02em;line-height:1.2">
+      Tu plan ${fullLabel} está activo
+    </h1>
+    <p style="margin:0 0 24px;color:#8FA8C8;font-size:14px;line-height:1.6">
+      Recibimos tu pago correctamente. Ya puedes simular sin restricciones desde tu dashboard.
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:rgba(0,168,255,.06);border:1px solid rgba(0,168,255,.25);border-radius:12px;margin-bottom:28px">
+      <tr><td style="padding:20px 24px">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#C8D8F0">
+          <tr>
+            <td style="padding:6px 0;color:#5E7BA4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:.12em">PLAN</td>
+            <td align="right" style="padding:6px 0;color:#FFFFFF;font-weight:600">${fullLabel}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#5E7BA4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:.12em">FECHA</td>
+            <td align="right" style="padding:6px 0;color:#FFFFFF;font-weight:600">${today}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0 6px;color:#5E7BA4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:.12em;border-top:1px solid rgba(0,168,255,.15)">MONTO</td>
+            <td align="right" style="padding:10px 0 6px;color:#FFC107;font-weight:700;font-size:18px;border-top:1px solid rgba(0,168,255,.15)">$${amountFmt} CLP</td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 8px">
+      <tr><td style="border-radius:10px;background:#00A8FF">
+        <a href="${APP_URL}" style="display:inline-block;padding:14px 36px;color:#000000;font-weight:700;font-size:14px;text-decoration:none;letter-spacing:.02em">
+          Ir al dashboard →
+        </a>
+      </td></tr>
+    </table>
+
+    <p style="margin:28px 0 0;color:#5E7BA4;font-size:12px;line-height:1.6;text-align:center">
+      ¿Necesitas ayuda? Escríbenos a <a href="mailto:hola@minervadeal.com" style="color:#00A8FF;text-decoration:none">hola@minervadeal.com</a>
+    </p>
+  `;
+
   await transporter.sendMail({
     from:    `"MINERVA Deal Engine" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
     to:      email,
-    subject: `Pago confirmado · MINERVA ${planLabel}`,
-    html: `<div style="font-family:sans-serif;max-width:520px;margin:auto;padding:30px;background:#0A1628;color:#C8D8F0;border-radius:12px">
-      <h2 style="color:#fff">¡Pago confirmado!</h2>
-      <p>Tu pago de $${amount?.toLocaleString("es-CL") || "—"} CLP fue recibido.</p>
-      <p>Plan: <strong>${planLabel}</strong></p>
-      <p style="margin-top:20px"><a href="${APP_URL}" style="background:#2997FF;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">Ingresar a MINERVA →</a></p>
-    </div>`,
+    subject: `✓ Pago confirmado · ${fullLabel}`,
+    html:    emailLayout({ preheader: `Tu plan ${fullLabel} está activo. Monto: $${amountFmt} CLP.`, contentHtml: content }),
   });
   console.log("RECIBO ENVIADO:", email);
 }
 
+// 2) NOTIFICACIÓN INTERNA AL EQUIPO DE VENTAS
 async function sendSalesNotificationEmail(data) {
   if (!process.env.SMTP_USER) return;
+  const planLabel = data.plan_requested === "pyme" ? "PYME" : "Enterprise";
+
+  const row = (label, value) => `
+    <tr>
+      <td style="padding:8px 0;color:#5E7BA4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:.12em;width:35%;vertical-align:top">${label}</td>
+      <td style="padding:8px 0;color:#FFFFFF;font-size:13px;vertical-align:top">${value || "<span style='color:#3A5070'>—</span>"}</td>
+    </tr>`;
+
+  const content = `
+    <p style="margin:0 0 6px;font-family:'Courier New',monospace;font-size:10px;color:#FFC107;letter-spacing:.2em">NUEVA COTIZACIÓN · ${planLabel.toUpperCase()}</p>
+    <h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:#FFFFFF;letter-spacing:-.02em;line-height:1.2">
+      ${data.empresa}
+    </h1>
+    <p style="margin:0 0 28px;color:#8FA8C8;font-size:14px">
+      Solicita una propuesta para ${planLabel}.
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:rgba(0,168,255,.05);border:1px solid rgba(0,168,255,.2);border-radius:12px;margin-bottom:24px">
+      <tr><td style="padding:18px 22px">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          ${row("CONTACTO",     data.full_name)}
+          ${row("EMAIL",        `<a href="mailto:${data.email}" style="color:#00A8FF;text-decoration:none">${data.email}</a>`)}
+          ${row("CARGO",        data.cargo)}
+          ${row("PAÍS",         data.pais)}
+          ${row("TELÉFONO",     data.telefono)}
+          ${row("EQUIPO",       data.team_size ? `${data.team_size} personas` : null)}
+          ${row("CASO DE USO",  data.use_case)}
+        </table>
+      </td></tr>
+    </table>
+
+    ${data.message ? `
+    <p style="margin:0 0 6px;font-family:'Courier New',monospace;font-size:10px;color:#5E7BA4;letter-spacing:.12em">MENSAJE</p>
+    <div style="background:rgba(0,0,0,.25);border-left:2px solid #00A8FF;padding:14px 18px;border-radius:0 8px 8px 0;color:#C8D8F0;font-size:13px;line-height:1.6;margin-bottom:24px">
+      ${data.message.replace(/\n/g, "<br/>")}
+    </div>` : ""}
+
+    <p style="margin:24px 0 0;color:#5E7BA4;font-size:12px;text-align:center">
+      Responde directamente a este correo o contacta a <strong style="color:#FFFFFF">${data.email}</strong>
+    </p>
+  `;
+
   await transporter.sendMail({
     from:    `"MINERVA Sales" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
+    replyTo: data.email,
     to:      SALES_EMAIL,
-    subject: `Nueva cotización ${data.plan_requested.toUpperCase()}: ${data.empresa}`,
-    html: `
-      <h2>Nueva solicitud de cotización</h2>
-      <p><strong>Plan:</strong> ${data.plan_requested.toUpperCase()}</p>
-      <hr/>
-      <p><strong>Nombre:</strong> ${data.full_name}</p>
-      <p><strong>Email:</strong> ${data.email}</p>
-      <p><strong>Empresa:</strong> ${data.empresa}</p>
-      <p><strong>Cargo:</strong> ${data.cargo || "—"}</p>
-      <p><strong>País:</strong> ${data.pais || "—"}</p>
-      <p><strong>Teléfono:</strong> ${data.telefono || "—"}</p>
-      <p><strong>Tamaño equipo:</strong> ${data.team_size || "—"}</p>
-      <p><strong>Caso de uso:</strong> ${data.use_case || "—"}</p>
-      <p><strong>Mensaje:</strong></p>
-      <p>${data.message ? data.message.replace(/\n/g,"<br/>") : "—"}</p>
-    `,
+    subject: `[${planLabel}] Cotización: ${data.empresa}`,
+    html:    emailLayout({ preheader: `${data.full_name} de ${data.empresa} solicita ${planLabel}`, contentHtml: content }),
   });
   console.log("EMAIL VENTAS PARA:", data.email);
 }
 
+// 3) WELCOME CODE
 async function sendWelcomeCodeEmail(email, code, planBase, expiresAt, isResent) {
   if (!process.env.SMTP_USER) return;
   const planLabel = planBase === "starter" ? "Starter" : "Imperium";
-  const expDate = new Date(expiresAt).toLocaleDateString("es-CL", { day:"numeric", month:"long", year:"numeric" });
+  const expDate   = new Date(expiresAt).toLocaleDateString("es-CL", { day:"numeric", month:"long", year:"numeric" });
+
+  const heading = isResent
+    ? "Aquí tienes tu código nuevamente"
+    : `Bienvenido al ${planLabel === "Starter" ? "camino del" : "rango de"} ${planLabel}`;
+
+  const intro = isResent
+    ? `Reenviamos el código que solicitaste. Recuerda que es válido para una sola activación.`
+    : `Has dado el primer paso. Aquí tienes tu código exclusivo de <strong style="color:#FFFFFF">50% de descuento</strong> sobre el primer pago de tu plan <strong style="color:#FFFFFF">${planLabel} Mensual</strong>.`;
+
+  const content = `
+    <p style="margin:0 0 6px;font-family:'Courier New',monospace;font-size:10px;color:#FFC107;letter-spacing:.2em">CÓDIGO DE BIENVENIDA</p>
+    <h1 style="margin:0 0 16px;font-size:26px;font-weight:700;color:#FFFFFF;letter-spacing:-.02em;line-height:1.25">
+      ${heading}
+    </h1>
+    <p style="margin:0 0 28px;color:#8FA8C8;font-size:14px;line-height:1.6">
+      ${intro}
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(135deg,rgba(255,193,7,.12) 0%,rgba(255,193,7,.04) 100%);border:2px dashed #FFC107;border-radius:14px;margin-bottom:24px">
+      <tr><td style="padding:28px 20px;text-align:center">
+        <p style="margin:0 0 10px;font-family:'Courier New',monospace;font-size:10px;color:#FFC107;letter-spacing:.25em">TU CÓDIGO ÚNICO</p>
+        <p style="margin:0;font-family:'Courier New',monospace;font-size:30px;font-weight:700;color:#FFFFFF;letter-spacing:.12em">
+          ${code}
+        </p>
+        <p style="margin:14px 0 0;font-size:11px;color:#8FA8C8">
+          Válido hasta el <strong style="color:#FFFFFF">${expDate}</strong>
+        </p>
+      </td></tr>
+    </table>
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:rgba(0,168,255,.05);border:1px solid rgba(0,168,255,.2);border-radius:12px;margin-bottom:24px">
+      <tr><td style="padding:20px 24px">
+        <p style="margin:0 0 14px;font-family:'Courier New',monospace;font-size:10px;color:#00A8FF;letter-spacing:.18em">CÓMO USARLO</p>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#C8D8F0;line-height:1.55">
+          <tr><td style="padding:4px 0"><span style="color:#FFC107;font-weight:700">1.</span> &nbsp; Vuelve a la app de MINERVA</td></tr>
+          <tr><td style="padding:4px 0"><span style="color:#FFC107;font-weight:700">2.</span> &nbsp; Selecciona el plan <strong style="color:#FFFFFF">${planLabel} Mensual</strong></td></tr>
+          <tr><td style="padding:4px 0"><span style="color:#FFC107;font-weight:700">3.</span> &nbsp; Pega tu código en el campo correspondiente</td></tr>
+          <tr><td style="padding:4px 0"><span style="color:#FFC107;font-weight:700">4.</span> &nbsp; Aplica y procede al pago con 50% OFF</td></tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 8px">
+      <tr><td style="border-radius:10px;background:#FFC107">
+        <a href="${APP_URL}/pricing" style="display:inline-block;padding:14px 36px;color:#000000;font-weight:700;font-size:14px;text-decoration:none;letter-spacing:.02em">
+          Activar mi descuento →
+        </a>
+      </td></tr>
+    </table>
+
+    <p style="margin:28px 0 0;color:#5E7BA4;font-size:11px;line-height:1.6;text-align:center">
+      Este código es de un solo uso y personal.<br/>
+      Si no fuiste tú quien lo solicitó, simplemente ignora este correo.
+    </p>
+  `;
+
   await transporter.sendMail({
     from:    `"MINERVA Deal Engine" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
     to:      email,
-    subject: `Tu código de bienvenida · MINERVA ${planLabel}`,
-    html: `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:540px;margin:auto;background:#0A1628;color:#C8D8F0;padding:40px;border-radius:14px;border:1px solid #1B3A6B">
-      <div style="font-family:'Courier New',monospace;font-size:10px;color:#2997FF;letter-spacing:.18em;margin-bottom:14px">CÓDIGO DE BIENVENIDA</div>
-      <h2 style="color:#fff;margin:0 0 8px;font-size:24px;letter-spacing:-.02em">${isResent ? "Te reenviamos tu código" : "¡Bienvenido!"}</h2>
-      <p style="color:#8FA8C8;font-size:14px;margin:0 0 24px;line-height:1.5">
-        Aquí está tu código exclusivo de 50% OFF para tu primer mes del plan <strong style="color:#fff">${planLabel} Mensual</strong>.
-      </p>
-      <div style="background:rgba(255,193,7,.08);border:2px dashed #FFC107;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px">
-        <div style="font-family:'Courier New',monospace;font-size:11px;color:#FFC107;letter-spacing:.15em;margin-bottom:8px">TU CÓDIGO</div>
-        <div style="font-family:'Courier New',monospace;font-size:28px;color:#fff;font-weight:700;letter-spacing:.08em">${code}</div>
-      </div>
-      <p style="color:#8FA8C8;font-size:13px;margin:0 0 18px;line-height:1.6">
-        <strong style="color:#fff">¿Cómo usarlo?</strong><br/>
-        1. Vuelve a la app de MINERVA<br/>
-        2. Selecciona el plan ${planLabel} Mensual<br/>
-        3. Pega este código en el campo "Código de bienvenida"<br/>
-        4. Aplica y procede al pago con 50% de descuento
-      </p>
-      <p style="color:#8FA8C8;font-size:12px;margin:18px 0 0;padding:14px;background:rgba(255,255,255,.04);border-radius:8px">
-        ⏱ Tu código expira el <strong style="color:#fff">${expDate}</strong>. Es de un solo uso.
-      </p>
-      <p style="color:#3A5070;font-size:11px;margin-top:24px;text-align:center">
-        Si no solicitaste este código, puedes ignorar este correo.
-      </p>
-    </div>`,
+    subject: `🎁 Tu código de bienvenida · MINERVA ${planLabel}`,
+    html:    emailLayout({ preheader: `Tu código ${code} de 50% OFF para ${planLabel} Mensual`, contentHtml: content }),
   });
   console.log("WELCOME CODE EMAIL ENVIADO A:", email);
 }
 
+// 4) CONFIRMACIÓN DE COTIZACIÓN AL CLIENTE
 async function sendQuoteConfirmationEmail(email, name, plan) {
   if (!process.env.SMTP_USER) return;
   const planLabel = plan === "pyme" ? "PYME" : "Enterprise";
+
+  const content = `
+    <p style="margin:0 0 6px;font-family:'Courier New',monospace;font-size:10px;color:#00A8FF;letter-spacing:.2em">SOLICITUD RECIBIDA</p>
+    <h1 style="margin:0 0 16px;font-size:26px;font-weight:700;color:#FFFFFF;letter-spacing:-.02em;line-height:1.2">
+      Gracias, ${name}
+    </h1>
+    <p style="margin:0 0 24px;color:#8FA8C8;font-size:14px;line-height:1.6">
+      Recibimos tu interés en el plan <strong style="color:#FFFFFF">${planLabel}</strong>. Un consultor de MINERVA revisará tu caso y te contactará personalmente.
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:rgba(0,168,255,.06);border:1px solid rgba(0,168,255,.25);border-radius:12px;margin-bottom:24px">
+      <tr><td style="padding:18px 22px">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="vertical-align:middle;width:48px;padding-right:14px">
+              <div style="width:38px;height:38px;background:rgba(0,168,255,.15);border:1px solid rgba(0,168,255,.4);border-radius:10px;text-align:center;line-height:36px;font-size:18px">⏱</div>
+            </td>
+            <td style="vertical-align:middle">
+              <p style="margin:0 0 2px;color:#FFFFFF;font-size:14px;font-weight:600">Te contactaremos en 24 horas hábiles</p>
+              <p style="margin:0;color:#8FA8C8;font-size:12px">Lunes a viernes, horario chileno</p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <p style="margin:0 0 24px;color:#8FA8C8;font-size:13px;line-height:1.6">
+      Mientras tanto, si quieres explorar el motor con tu cuenta actual, puedes seguir usando tu trial.
+    </p>
+
+    <table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto">
+      <tr><td style="border-radius:10px;background:rgba(0,168,255,.12);border:1px solid rgba(0,168,255,.4)">
+        <a href="${APP_URL}" style="display:inline-block;padding:13px 32px;color:#00A8FF;font-weight:700;font-size:13px;text-decoration:none;letter-spacing:.02em">
+          Volver a MINERVA →
+        </a>
+      </td></tr>
+    </table>
+
+    <p style="margin:28px 0 0;color:#5E7BA4;font-size:12px;line-height:1.6;text-align:center">
+      ¿Tienes algo urgente? Escríbenos a <a href="mailto:hola@minervadeal.com" style="color:#00A8FF;text-decoration:none">hola@minervadeal.com</a>
+    </p>
+  `;
+
   await transporter.sendMail({
     from:    `"MINERVA Deal Engine" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
     to:      email,
-    subject: `Recibimos tu solicitud · ${planLabel} MINERVA`,
-    html: `
-      <p>Hola ${name},</p>
-      <p>Gracias por tu interés en MINERVA <strong>${planLabel}</strong>.</p>
-      <p>Recibimos tu solicitud y un consultor te contactará en las próximas <strong>24 horas hábiles</strong>.</p>
-      <p>Saludos,<br/>El equipo de MINERVA</p>
-    `,
+    subject: `Recibimos tu solicitud · ${planLabel}`,
+    html:    emailLayout({ preheader: `Un consultor MINERVA te contactará en 24 horas hábiles.`, contentHtml: content }),
   });
   console.log("CONFIRMACIÓN ENVIADA A:", email);
 }
