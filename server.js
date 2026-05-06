@@ -474,7 +474,7 @@ async function sendPaymentReceiptEmail(email, amount, planConfig) {
   if (!process.env.SMTP_USER) return;
   const planLabel = planConfig ? `${planConfig.plan.toUpperCase()} ${planConfig.billing_cycle === "annual" ? "Anual" : "Mensual"}` : "MINERVA";
   await transporter.sendMail({
-    from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
+    from:    `"MINERVA Deal Engine" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
     to:      email,
     subject: `Pago confirmado · MINERVA ${planLabel}`,
     html: `<div style="font-family:sans-serif;max-width:520px;margin:auto;padding:30px;background:#0A1628;color:#C8D8F0;border-radius:12px">
@@ -490,7 +490,7 @@ async function sendPaymentReceiptEmail(email, amount, planConfig) {
 async function sendSalesNotificationEmail(data) {
   if (!process.env.SMTP_USER) return;
   await transporter.sendMail({
-    from:    `"MINERVA Sales" <${process.env.SMTP_USER}>`,
+    from:    `"MINERVA Sales" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
     to:      SALES_EMAIL,
     subject: `Nueva cotización ${data.plan_requested.toUpperCase()}: ${data.empresa}`,
     html: `
@@ -517,7 +517,7 @@ async function sendWelcomeCodeEmail(email, code, planBase, expiresAt, isResent) 
   const planLabel = planBase === "starter" ? "Starter" : "Imperium";
   const expDate = new Date(expiresAt).toLocaleDateString("es-CL", { day:"numeric", month:"long", year:"numeric" });
   await transporter.sendMail({
-    from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
+    from:    `"MINERVA Deal Engine" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
     to:      email,
     subject: `Tu código de bienvenida · MINERVA ${planLabel}`,
     html: `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:540px;margin:auto;background:#0A1628;color:#C8D8F0;padding:40px;border-radius:14px;border:1px solid #1B3A6B">
@@ -552,7 +552,7 @@ async function sendQuoteConfirmationEmail(email, name, plan) {
   if (!process.env.SMTP_USER) return;
   const planLabel = plan === "pyme" ? "PYME" : "Enterprise";
   await transporter.sendMail({
-    from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
+    from:    `"MINERVA Deal Engine" <${process.env.MAIL_FROM || "no-reply@minervadeal.com"}>`,
     to:      email,
     subject: `Recibimos tu solicitud · ${planLabel} MINERVA`,
     html: `
