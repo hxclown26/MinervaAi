@@ -140,8 +140,7 @@ app.get("/api/ping", (_req, res) => {
 
 /**
  * POST /api/validate-coupon
- * Body: { code, userId, planCode }
- * Devuelve { valid, discount_percent, final_amount, error?... }
+ * Valida un código de bienvenida antes del checkout
  */
 app.post("/api/validate-coupon", async (req, res) => {
   const { code, userId, planCode } = req.body;
@@ -153,7 +152,7 @@ app.post("/api/validate-coupon", async (req, res) => {
     return res.status(400).json({ valid: false, error: "Plan inválido" });
   }
   try {
-    const result = await supabaseRpc("validate_coupon", {
+    const result = await supabaseRpc("validate_welcome_code", {
       p_code: code,
       p_user_id: userId,
       p_plan_code: planCode,
@@ -163,6 +162,45 @@ app.post("/api/validate-coupon", async (req, res) => {
   } catch (err) {
     console.error("VALIDATE COUPON ERROR:", err);
     return res.status(500).json({ valid: false, error: "Error validando cupón" });
+  }
+});
+
+/**
+ * POST /api/request-welcome-code
+ * Solicita un código de bienvenida personalizado y lo envía por email.
+ * 1 código por usuario por plan_base.
+ * Body: { userId, email, planBase }
+ */
+app.post("/api/request-welcome-code", async (req, res) => {
+  const { userId, email, planBase } = req.body;
+  if (!userId || !email || !planBase) {
+    return res.status(400).json({ ok: false, error: "Faltan datos" });
+  }
+  if (!["starter","imperium"].includes(planBase)) {
+    return res.status(400).json({ ok: false, error: "Plan inválido" });
+  }
+
+  try {
+    const result = await supabaseRpc("request_welcome_code", {
+      p_user_id: userId,
+      p_email: email,
+      p_plan_base: planBase,
+    }, true);
+
+    if (!result?.ok) {
+      return res.json(result);
+    }
+
+    // Enviar email con el código
+    sendWelcomeCodeEmail(email, result.code, planBase, result.expires_at, result.resent).catch(console.error);
+
+    return res.json({
+      ok: true,
+      message: result.resent ? "Te reenviamos tu código por email" : "Te enviamos tu código por email",
+    });
+  } catch (err) {
+    console.error("REQUEST WELCOME CODE ERROR:", err);
+    return res.status(500).json({ ok: false, error: "Error generando código" });
   }
 });
 
@@ -186,10 +224,10 @@ app.post("/api/subscribe", async (req, res) => {
   let amount = planConfig.amount_clp;
   let appliedCoupon = null;
 
-  // Si hay cupón, validarlo y aplicar descuento
+  // Si hay código de bienvenida, validarlo y aplicar descuento
   if (couponCode) {
     try {
-      const validation = await supabaseRpc("validate_coupon", {
+      const validation = await supabaseRpc("validate_welcome_code", {
         p_code: couponCode,
         p_user_id: userId,
         p_plan_code: appPlanCode,
@@ -199,14 +237,12 @@ app.post("/api/subscribe", async (req, res) => {
       if (validation?.valid) {
         amount = validation.final_amount;
         appliedCoupon = validation.code;
-        console.log(`COUPON APPLIED: ${couponCode} → ${amount} CLP`);
+        console.log(`WELCOME CODE APPLIED: ${couponCode} → ${amount} CLP`);
       } else {
-        // Cupón inválido: no se aplica descuento, se cobra precio normal
-        console.log(`COUPON REJECTED: ${couponCode} → ${validation?.error}`);
+        console.log(`WELCOME CODE REJECTED: ${couponCode} → ${validation?.error}`);
       }
     } catch (err) {
-      console.error("COUPON VALIDATION ERROR:", err);
-      // No bloqueamos el checkout si falla la validación, simplemente cobramos full
+      console.error("WELCOME CODE VALIDATION ERROR:", err);
     }
   }
 
@@ -336,16 +372,12 @@ async function handlePaymentConfirm(req, res) {
       }, true);
     }
 
-    // Si hay cupón aplicado: registrar uso
+    // Si hay código aplicado: marcar como usado
     if (couponCode && userId) {
-      await supabaseRpc("register_coupon_use", {
+      await supabaseRpc("mark_welcome_code_used", {
         p_code: couponCode,
         p_user_id: userId,
-        p_email: email,
-        p_plan_code: appPlanCode,
-        p_original_amount: originalAmount,
-        p_final_amount: amount,
-      }, true).catch(err => console.error("ERROR REGISTER COUPON:", err));
+      }, true).catch(err => console.error("ERROR MARK CODE USED:", err));
     }
 
     // Activar suscripción para el usuario (vía RPC)
@@ -478,6 +510,42 @@ async function sendSalesNotificationEmail(data) {
     `,
   });
   console.log("EMAIL VENTAS PARA:", data.email);
+}
+
+async function sendWelcomeCodeEmail(email, code, planBase, expiresAt, isResent) {
+  if (!process.env.SMTP_USER) return;
+  const planLabel = planBase === "starter" ? "Starter" : "Imperium";
+  const expDate = new Date(expiresAt).toLocaleDateString("es-CL", { day:"numeric", month:"long", year:"numeric" });
+  await transporter.sendMail({
+    from:    `"MINERVA Deal Engine" <${process.env.SMTP_USER}>`,
+    to:      email,
+    subject: `Tu código de bienvenida · MINERVA ${planLabel}`,
+    html: `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:540px;margin:auto;background:#0A1628;color:#C8D8F0;padding:40px;border-radius:14px;border:1px solid #1B3A6B">
+      <div style="font-family:'Courier New',monospace;font-size:10px;color:#2997FF;letter-spacing:.18em;margin-bottom:14px">CÓDIGO DE BIENVENIDA</div>
+      <h2 style="color:#fff;margin:0 0 8px;font-size:24px;letter-spacing:-.02em">${isResent ? "Te reenviamos tu código" : "¡Bienvenido!"}</h2>
+      <p style="color:#8FA8C8;font-size:14px;margin:0 0 24px;line-height:1.5">
+        Aquí está tu código exclusivo de 50% OFF para tu primer mes del plan <strong style="color:#fff">${planLabel} Mensual</strong>.
+      </p>
+      <div style="background:rgba(255,193,7,.08);border:2px dashed #FFC107;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px">
+        <div style="font-family:'Courier New',monospace;font-size:11px;color:#FFC107;letter-spacing:.15em;margin-bottom:8px">TU CÓDIGO</div>
+        <div style="font-family:'Courier New',monospace;font-size:28px;color:#fff;font-weight:700;letter-spacing:.08em">${code}</div>
+      </div>
+      <p style="color:#8FA8C8;font-size:13px;margin:0 0 18px;line-height:1.6">
+        <strong style="color:#fff">¿Cómo usarlo?</strong><br/>
+        1. Vuelve a la app de MINERVA<br/>
+        2. Selecciona el plan ${planLabel} Mensual<br/>
+        3. Pega este código en el campo "Código de bienvenida"<br/>
+        4. Aplica y procede al pago con 50% de descuento
+      </p>
+      <p style="color:#8FA8C8;font-size:12px;margin:18px 0 0;padding:14px;background:rgba(255,255,255,.04);border-radius:8px">
+        ⏱ Tu código expira el <strong style="color:#fff">${expDate}</strong>. Es de un solo uso.
+      </p>
+      <p style="color:#3A5070;font-size:11px;margin-top:24px;text-align:center">
+        Si no solicitaste este código, puedes ignorar este correo.
+      </p>
+    </div>`,
+  });
+  console.log("WELCOME CODE EMAIL ENVIADO A:", email);
 }
 
 async function sendQuoteConfirmationEmail(email, name, plan) {
