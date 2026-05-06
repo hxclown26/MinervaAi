@@ -1,6 +1,5 @@
 import express from "express";
 import crypto from "crypto";
-import nodemailer from "nodemailer";
 import cors from "cors";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -34,13 +33,40 @@ const APP_PLAN_TO_INTERNAL = {
   imperium_annual:  { plan:"imperium", billing_cycle:"annual",  simulations_limit:60, amount_clp: 364000 },
 };
 
-// ── NODEMAILER ────────────────────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST,
-  port:   Number(process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-});
+// ── EMAIL SENDER (Resend HTTP API · evita problemas de puertos SMTP en Railway) ──
+const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.SMTP_PASS;
+const MAIL_FROM      = process.env.MAIL_FROM || "MINERVA Deal Engine <no-reply@minervadeal.com>";
+
+const transporter = {
+  async sendMail({ from, to, subject, html, replyTo }) {
+    if (!RESEND_API_KEY) {
+      console.warn("RESEND_API_KEY no configurada — email no enviado:", subject);
+      return;
+    }
+    const payload = {
+      from: from || MAIL_FROM,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html,
+    };
+    if (replyTo) payload.reply_to = replyTo;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("RESEND ERROR:", res.status, data);
+      throw new Error(`Resend API error ${res.status}: ${JSON.stringify(data)}`);
+    }
+    return data;
+  }
+};
 
 // ── FIRMA HMAC-SHA256 (requerida por Flow) ────────────────────────────────────
 function signParams(params) {
@@ -520,7 +546,7 @@ function emailLayout({ preheader, contentHtml }) {
 
 // 1) RECIBO DE PAGO
 async function sendPaymentReceiptEmail(email, amount, planConfig) {
-  if (!process.env.SMTP_USER) return;
+  if (!RESEND_API_KEY) return;
   const planName    = planConfig?.plan === "imperium" ? "Imperium" : "Starter";
   const cycleLabel  = planConfig?.billing_cycle === "annual" ? "Anual" : "Mensual";
   const fullLabel   = `${planName} ${cycleLabel}`;
@@ -579,7 +605,7 @@ async function sendPaymentReceiptEmail(email, amount, planConfig) {
 
 // 2) NOTIFICACIÓN INTERNA AL EQUIPO DE VENTAS
 async function sendSalesNotificationEmail(data) {
-  if (!process.env.SMTP_USER) return;
+  if (!RESEND_API_KEY) return;
   const planLabel = data.plan_requested === "pyme" ? "PYME" : "Enterprise";
 
   const row = (label, value) => `
@@ -634,7 +660,7 @@ async function sendSalesNotificationEmail(data) {
 
 // 3) WELCOME CODE
 async function sendWelcomeCodeEmail(email, code, planBase, expiresAt, isResent) {
-  if (!process.env.SMTP_USER) return;
+  if (!RESEND_API_KEY) return;
   const planLabel = planBase === "starter" ? "Starter" : "Imperium";
   const expDate   = new Date(expiresAt).toLocaleDateString("es-CL", { day:"numeric", month:"long", year:"numeric" });
 
@@ -704,7 +730,7 @@ async function sendWelcomeCodeEmail(email, code, planBase, expiresAt, isResent) 
 
 // 4) CONFIRMACIÓN DE COTIZACIÓN AL CLIENTE
 async function sendQuoteConfirmationEmail(email, name, plan) {
-  if (!process.env.SMTP_USER) return;
+  if (!RESEND_API_KEY) return;
   const planLabel = plan === "pyme" ? "PYME" : "Enterprise";
 
   const content = `
