@@ -202,12 +202,44 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
   const isImperium = plan.id.startsWith("imperium");
   const hasPromo = !!plan.promoUSD;
   const isAnnual = plan.period === "annual";
-  const [showCoupon, setShowCoupon] = useState(false);
+  const planBase = isImperium ? "imperium" : "starter";
+  const { session } = useAuth();
+
+  // Estados de flujo de cupón
+  const [stage, setStage] = useState<"hidden"|"request"|"sent"|"input">("hidden");
+  const [requestLoading, setRequestLoading] = useState(false);
+  const [requestMsg, setRequestMsg] = useState("");
   const [couponInput, setCouponInput] = useState("");
   const [couponState, setCouponState] = useState<"idle"|"validating"|"valid"|"invalid">("idle");
   const [couponMsg, setCouponMsg] = useState("");
   const [couponDiscount, setCouponDiscount] = useState(0);
-  const { session } = useAuth();
+
+  const requestCode = async () => {
+    if (!session?.user?.id || !session?.user?.email) return;
+    setRequestLoading(true);
+    setRequestMsg("");
+    try {
+      const res = await fetch("/api/request-welcome-code", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({
+          userId: session.user.id,
+          email: session.user.email,
+          planBase,
+        }),
+      });
+      const data = await res.json();
+      if (data?.ok) {
+        setStage("sent");
+        setRequestMsg(data.message || "Código enviado a tu correo");
+      } else {
+        setRequestMsg(data?.error || "No pudimos generar el código");
+      }
+    } catch {
+      setRequestMsg("Error de conexión");
+    }
+    setRequestLoading(false);
+  };
 
   const validateCoupon = async () => {
     if (!couponInput.trim() || !session?.user?.id) return;
@@ -227,7 +259,7 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
       if (data?.valid) {
         setCouponState("valid");
         setCouponDiscount(data.discount_percent || 0);
-        setCouponMsg(`✓ ${data.discount_percent}% OFF · ${data.uses_remaining} uso(s) restante(s)`);
+        setCouponMsg(`✓ ${data.discount_percent}% OFF aplicado`);
       } else {
         setCouponState("invalid");
         setCouponDiscount(0);
@@ -273,16 +305,15 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
 
       <div style={{marginBottom:20,minHeight:80}}>
         {couponState === "valid" ? (
-          // Mostrar precio con descuento aplicado
           <>
             <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:4}}>
               <span style={{fontSize:32,fontWeight:800,color:C.gold,letterSpacing:"-.03em"}}>
-                ${Math.round((isAnnual ? plan.priceCLP : plan.priceCLP) * (1 - couponDiscount/100)).toLocaleString("es-CL")}
+                ${Math.round(plan.priceCLP * (1 - couponDiscount/100)).toLocaleString("es-CL")}
               </span>
               <span style={{fontSize:13,color:"rgba(200,216,240,.5)"}}>CLP</span>
             </div>
             <div style={{fontSize:11,color:C.gold,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".04em"}}>
-              {couponDiscount}% OFF aplicado · era ${plan.priceCLP.toLocaleString("es-CL")}
+              {couponDiscount}% OFF · era ${plan.priceCLP.toLocaleString("es-CL")}
             </div>
           </>
         ) : hasPromo ? (
@@ -292,7 +323,7 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
               <span style={{fontSize:13,color:"rgba(200,216,240,.5)"}}>USD/mes</span>
             </div>
             <div style={{fontSize:11,color:C.gold,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".04em"}}>
-              Con código <strong>{plan.coupon_code}</strong>: 50% OFF × {plan.promoMonths} meses
+              50% OFF disponible · solicítalo abajo
             </div>
             <div style={{fontSize:10,color:"rgba(200,216,240,.4)",marginTop:4}}>
               ≈ ${plan.priceCLP.toLocaleString("es-CL")} CLP/mes
@@ -323,52 +354,107 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
         ))}
       </ul>
 
-      {/* Sección de cupón (solo para mensuales con promo) */}
-      {hasPromo && plan.coupon_code && (
+      {/* Sección de código de bienvenida (solo mensuales con promo) */}
+      {hasPromo && (
         <div style={{marginBottom:14}}>
-          {!showCoupon ? (
+          {/* Stage 1: Botón "Solicitar código de bienvenida" */}
+          {stage === "hidden" && (
             <button
-              onClick={()=>setShowCoupon(true)}
+              onClick={()=>setStage("request")}
               style={{
-                background:"none", border:"none",
-                color:C.gold, fontSize:11, fontWeight:600,
-                cursor:"pointer", fontFamily:"inherit",
-                padding:"6px 0", textAlign:"left" as const, width:"100%"
+                width:"100%",
+                padding:"10px",
+                background:"rgba(255,193,7,.06)",
+                border:`1px dashed ${C.gold}55`,
+                borderRadius:8,
+                color:C.gold,
+                fontSize:12, fontWeight:700,
+                cursor:"pointer",
+                fontFamily:"inherit",
+                letterSpacing:".02em",
+                transition:"all .15s"
               }}
+              onMouseEnter={(e:any)=>{e.currentTarget.style.background="rgba(255,193,7,.12)";}}
+              onMouseLeave={(e:any)=>{e.currentTarget.style.background="rgba(255,193,7,.06)";}}
             >
-              ¿Tienes un código de bienvenida? →
+              🎁 Obtener código de bienvenida (50% OFF)
             </button>
-          ) : (
-            <div style={{padding:"10px 12px",background:"rgba(255,193,7,.06)",border:`1px solid ${C.gold}33`,borderRadius:8}}>
-              <div style={{fontSize:10,color:C.gold,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".1em",marginBottom:6}}>CÓDIGO DE DESCUENTO</div>
+          )}
+
+          {/* Stage 2: Confirmar y solicitar */}
+          {stage === "request" && (
+            <div style={{padding:"14px",background:"rgba(255,193,7,.06)",border:`1px solid ${C.gold}33`,borderRadius:10}}>
+              <div style={{fontSize:11,color:C.gold,fontFamily:"'JetBrains Mono',monospace",letterSpacing:".1em",marginBottom:8}}>CÓDIGO DE BIENVENIDA</div>
+              <div style={{fontSize:12,color:"rgba(200,216,240,.85)",marginBottom:12,lineHeight:1.5}}>
+                Te enviaremos un código exclusivo de <strong>50% OFF</strong> a:<br/>
+                <strong style={{color:C.textLight,wordBreak:"break-word" as const}}>{session?.user?.email}</strong>
+              </div>
+              <div style={{fontSize:10,color:"rgba(200,216,240,.5)",marginBottom:12,fontStyle:"italic" as const}}>
+                Solo puedes solicitar este código una vez. Aplica únicamente al primer pago.
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button
+                  onClick={()=>{setStage("hidden");setRequestMsg("");}}
+                  disabled={requestLoading}
+                  style={{flex:1,padding:"9px",background:"transparent",border:`1px solid rgba(255,255,255,.15)`,borderRadius:6,fontSize:11,cursor:"pointer",fontFamily:"inherit",color:"rgba(200,216,240,.7)",fontWeight:600}}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={requestCode}
+                  disabled={requestLoading}
+                  style={{flex:2,padding:"9px",background:requestLoading?"rgba(255,193,7,.4)":C.gold,border:"none",borderRadius:6,fontSize:11,fontWeight:700,color:"#000",cursor:requestLoading?"not-allowed":"pointer",fontFamily:"inherit"}}
+                >
+                  {requestLoading?"Enviando...":"Enviar código →"}
+                </button>
+              </div>
+              {requestMsg && !requestLoading && (
+                <div style={{marginTop:8,fontSize:10,color:C.error,fontFamily:"'JetBrains Mono',monospace"}}>
+                  {requestMsg}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Stage 3: Email enviado, mostrar input para pegar código */}
+          {stage === "sent" && (
+            <div style={{padding:"14px",background:"rgba(0,200,150,.06)",border:`1px solid ${C.success}33`,borderRadius:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{color:C.success,fontSize:14}}>✓</span>
+                <div style={{fontSize:12,color:C.textLight,fontWeight:700}}>Código enviado</div>
+              </div>
+              <div style={{fontSize:11,color:"rgba(200,216,240,.7)",marginBottom:10,lineHeight:1.5}}>
+                Revisa tu correo en <strong>{session?.user?.email}</strong> y pega el código aquí:
+              </div>
               <div style={{display:"flex",gap:6}}>
                 <input
                   type="text"
                   value={couponInput}
                   onChange={(e:any)=>{setCouponInput(e.target.value);setCouponState("idle");setCouponMsg("");}}
-                  placeholder={plan.coupon_code}
+                  placeholder={planBase === "starter" ? "WLM-XXXXXXXX" : "WIM-XXXXXXXX"}
                   disabled={couponState === "validating"}
                   style={{
                     flex:1,
-                    padding:"7px 10px",
+                    padding:"9px 12px",
                     background:"rgba(255,255,255,.05)",
-                    border:`1px solid ${couponState==="valid"?C.success:couponState==="invalid"?C.error:C.gold+"55"}`,
+                    border:`1px solid ${couponState==="valid"?C.success:couponState==="invalid"?C.error:"rgba(255,255,255,.15)"}`,
                     borderRadius:6,
-                    fontSize:11,
+                    fontSize:12,
                     color:C.textLight,
                     outline:"none",
-                    fontFamily:"inherit"
+                    fontFamily:"'JetBrains Mono',monospace",
+                    letterSpacing:".05em"
                   }}
                 />
                 <button
                   onClick={validateCoupon}
-                  disabled={!couponInput.trim() || couponState === "validating"}
+                  disabled={!couponInput.trim() || couponState === "validating" || couponState === "valid"}
                   style={{
-                    padding:"7px 12px",
+                    padding:"9px 14px",
                     background:couponState==="valid"?C.success:C.gold,
                     border:"none",borderRadius:6,
                     fontSize:11,fontWeight:700,
-                    color:"#000",cursor:"pointer",
+                    color:"#000",cursor:couponState==="valid"?"default":"pointer",
                     fontFamily:"inherit",
                     whiteSpace:"nowrap" as const
                   }}
@@ -377,9 +463,18 @@ function PlanCard({ plan, onCheckout, loading, disabled }:any) {
                 </button>
               </div>
               {couponMsg && (
-                <div style={{marginTop:6,fontSize:10,color:couponState==="valid"?C.success:C.error,fontFamily:"'JetBrains Mono',monospace"}}>
+                <div style={{marginTop:8,fontSize:10,color:couponState==="valid"?C.success:C.error,fontFamily:"'JetBrains Mono',monospace"}}>
                   {couponMsg}
                 </div>
+              )}
+              {couponState !== "valid" && (
+                <button
+                  onClick={requestCode}
+                  disabled={requestLoading}
+                  style={{marginTop:8,background:"none",border:"none",color:"rgba(200,216,240,.5)",fontSize:10,cursor:"pointer",fontFamily:"inherit",textDecoration:"underline",padding:0}}
+                >
+                  ¿No recibiste el correo? Reenviar
+                </button>
               )}
             </div>
           )}
