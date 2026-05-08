@@ -129,7 +129,7 @@ export function QuoteRequestModal({ plan, onClose }:{ plan:"pyme"|"enterprise"; 
 
         <div style={{marginBottom:12}}>
           <label style={lbl}>CASO DE USO PRINCIPAL</label>
-          <input value={form.use_case} onChange={upd("use_case")} style={inp} onFocus={focus} onBlur={blur} placeholder="Ej: Ventas industriales B2B en mercado chileno"/>
+          <input value={form.use_case} onChange={upd("use_case")} style={inp} onFocus={focus} onBlur={blur} placeholder="Ej: Ventas industriales B2B en mercado LATAM"/>
         </div>
 
         <div style={{marginBottom:18}}>
