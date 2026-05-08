@@ -25,6 +25,9 @@ const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const APP_URL     = process.env.APP_URL     || "https://app.minervadeal.com";
 const SALES_EMAIL = process.env.SALES_EMAIL || "hola@minervadeal.com";
 
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const CLAUDE_MODEL      = process.env.CLAUDE_MODEL || "claude-sonnet-4-5-20250929";
+
 // ── PLAN MAPPING (debe coincidir con lib/constants.ts del frontend) ───────────
 const APP_PLAN_TO_INTERNAL = {
   starter_monthly:  { plan:"starter",  billing_cycle:"monthly", simulations_limit:20, amount_clp: 32700  },
@@ -783,6 +786,63 @@ async function sendQuoteConfirmationEmail(email, name, plan) {
   });
   console.log("CONFIRMACIÓN ENVIADA A:", email);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MOTOR DE IA — proxy a Anthropic Messages API
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/claude
+ * Body: { system: string, user: string }
+ * Llamado desde src/lib/claude.ts en cada simulación. Cada agente del wizard
+ * (Compras, Planta, Calidad, Competidor, Vendedor) hace una llamada acá; al
+ * final el informe ejecutivo hace una llamada adicional.
+ */
+app.post("/api/claude", async (req, res) => {
+  try {
+    if (!ANTHROPIC_API_KEY) {
+      console.error("[/api/claude] ANTHROPIC_API_KEY no está configurada en el entorno");
+      return res.status(500).json({ error: "missing_api_key", content: "" });
+    }
+
+    const { system, user } = req.body || {};
+    if (!user || typeof user !== "string") {
+      return res.status(400).json({ error: "missing_user_message", content: "" });
+    }
+
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key":         ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type":      "application/json",
+      },
+      body: JSON.stringify({
+        model:      CLAUDE_MODEL,
+        max_tokens: 1024,
+        system:     system || "",
+        messages:   [{ role: "user", content: user }],
+      }),
+    });
+
+    if (!r.ok) {
+      const detail = await r.text();
+      console.error(`[/api/claude] Anthropic respondió ${r.status}:`, detail.slice(0, 500));
+      return res.status(502).json({ error: "anthropic_error", status: r.status, content: "" });
+    }
+
+    const data = await r.json();
+    // La Messages API devuelve content como array de blocks. Tomamos solo el texto.
+    const content = Array.isArray(data?.content)
+      ? data.content.filter(b => b.type === "text").map(b => b.text).join("\n").trim()
+      : "";
+
+    return res.json({ content });
+  } catch (err) {
+    console.error("[/api/claude] Excepción:", err);
+    return res.status(500).json({ error: "server_exception", content: "" });
+  }
+});
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SERVIR FRONTEND ESTÁTICO (Vite build)
