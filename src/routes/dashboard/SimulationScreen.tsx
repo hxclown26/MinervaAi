@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { sb } from "../../lib/supabase";
-import { C, NODE_TYPES } from "../../lib/constants";
+import { C, NODE_TYPES, COUNTRY_CONTEXT } from "../../lib/constants";
 import { canSimulate, extractProbability } from "../../lib/helpers";
 import { callClaude } from "../../lib/claude";
 import { AgentCard } from "../../components/AgentCard";
@@ -19,17 +19,19 @@ export function SimulationScreen({ market, model, clientData, weights, profile }
   const endRef = useRef<any>(null);
 
   const empresa = profile?.empresa || "Tu Empresa";
+  const pais = profile?.pais || "Chile";
+  const paisCtx = COUNTRY_CONTEXT[pais] || "";
   const enrichedClient = {...clientData, customModel: model.customModelDesc||""};
   const agents = model.agentDefs.map((a:any,i:number)=>({
     ...a,
     id:`${a.id}_${i}`,
     company: a.side==="vendedor" ? empresa.toUpperCase() : a.company,
-    systemPrompt: a.sys(market, enrichedClient),
+    systemPrompt: a.sys(market, enrichedClient, pais),
   }));
 
   const scene = `Mercado: ${market.name}${market.customContext?" — "+market.customContext:""} | Modelo: ${model.name}${model.customModelDesc?" — "+model.customModelDesc:""}
 Empresa vendedora: ${empresa}
-Cliente: ${clientData.name||"empresa del sector"} | País: Chile
+Cliente: ${clientData.name||"empresa del sector"} | País: ${pais}${paisCtx?"\nContexto de "+pais+": "+paisCtx:""}
 Propuesta: ${clientData.offerName||"propuesta comercial"}
 Situación actual: ${clientData.situation||"en evaluación"}
 Valor de la oportunidad: ${clientData.budget||"no especificado"}
