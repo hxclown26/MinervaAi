@@ -296,18 +296,54 @@ app.post("/api/subscribe", async (req, res) => {
       });
       flowCustomerId = created.customerId;
     } catch (err) {
-      // Probablemente ya existe — buscar directamente en Flow por externalId
-      console.warn("customer/create falló, intentando recuperar por externalId:", err.message);
+      // Flow devuelve 501 cuando el customer ya existe con ese externalId.
+      // Intentamos recuperar el customerId por tres vías en orden.
+      console.warn("customer/create falló, iniciando fallback:", err.message);
+
+      // Vía 1: customer/get con externalId (endpoint estándar Flow)
       try {
-        const found = await flowGet("customer/getByExternalId", { externalId: user.id });
+        const found = await flowGet("customer/get", { externalId: user.id });
         if (found?.customerId) {
+          console.log("Fallback vía customer/get OK:", found.customerId);
           flowCustomerId = found.customerId;
-        } else {
-          throw new Error("Flow no devolvió customerId al buscar por externalId");
         }
-      } catch (fallbackErr) {
-        console.error("customer/getByExternalId también falló:", fallbackErr.message);
-        throw fallbackErr;
+      } catch (e1) {
+        console.warn("Fallback customer/get falló:", e1.message);
+      }
+
+      // Vía 2: customer/getByExternalId
+      if (!flowCustomerId) {
+        try {
+          const found = await flowGet("customer/getByExternalId", { externalId: user.id });
+          if (found?.customerId) {
+            console.log("Fallback vía customer/getByExternalId OK:", found.customerId);
+            flowCustomerId = found.customerId;
+          }
+        } catch (e2) {
+          console.warn("Fallback customer/getByExternalId falló:", e2.message);
+        }
+      }
+
+      // Vía 3: customer/list filtrando por email
+      if (!flowCustomerId) {
+        try {
+          const list = await flowGet("customer/list", { filter: user.email, start: 0, limit: 5 });
+          const match = (list?.data || []).find(
+            c => c.externalId === user.id || c.email === user.email
+          );
+          if (match?.customerId) {
+            console.log("Fallback vía customer/list OK:", match.customerId);
+            flowCustomerId = match.customerId;
+          }
+        } catch (e3) {
+          console.warn("Fallback customer/list falló:", e3.message);
+        }
+      }
+
+      if (!flowCustomerId) {
+        throw new Error(
+          `No se pudo recuperar el customerId de Flow para el usuario ${user.id}. Error original: ${err.message}`
+        );
       }
     }
 
