@@ -297,10 +297,18 @@ app.post("/api/subscribe", async (req, res) => {
       flowCustomerId = created.customerId;
     } catch (err) {
       // Probablemente ya existe — buscar directamente en Flow por externalId
-      const found = await flowGet("customer/list", { filter: user.id });
-      const existing = (found?.data || []).find(c => c.externalId === user.id);
-      if (existing) flowCustomerId = existing.customerId;
-      else throw err;
+      console.warn("customer/create falló, intentando recuperar por externalId:", err.message);
+      try {
+        const found = await flowGet("customer/getByExternalId", { externalId: user.id });
+        if (found?.customerId) {
+          flowCustomerId = found.customerId;
+        } else {
+          throw new Error("Flow no devolvió customerId al buscar por externalId");
+        }
+      } catch (fallbackErr) {
+        console.error("customer/getByExternalId también falló:", fallbackErr.message);
+        throw fallbackErr;
+      }
     }
 
     // 2. Crear suscripción en Flow
