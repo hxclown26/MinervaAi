@@ -1,9 +1,6 @@
 // ── SUPABASE CONFIG ────────────────────────────────────────────────
-// Las variables de entorno se leen desde Vite en build time.
-// En desarrollo: .env.local → VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
-// En producción: variables de entorno de la plataforma (Railway / Netlify / Vercel)
 export const SUPABASE_URL  = (import.meta as any).env?.VITE_SUPABASE_URL  as string
-  ?? "https://tohfuokcngavbmbjsdru.supabase.co";   // fallback local dev
+  ?? "https://tohfuokcngavbmbjsdru.supabase.co";
 export const SUPABASE_ANON = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string
   ?? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRvaGZ1b2tjbmdhdmJtYmpzZHJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNDIyMTksImV4cCI6MjA5MjYxODIxOX0.gRc-Uv4NaT18SkjFupw6krvT_Nmqt7xt4zfH235siH8";
 
@@ -11,7 +8,7 @@ export const SUPABASE_ANON = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY as
 export interface SbSession {
   access_token:  string;
   refresh_token: string | null;
-  expires_at?:   number;   // unix timestamp en segundos
+  expires_at?:   number;
   user:          SbUser;
 }
 
@@ -27,18 +24,16 @@ export interface SbAuthResponse {
   expires_in?:    number;
   user?:          SbUser;
   error?:         { message: string; status?: number };
-  // Campos presentes cuando email confirmation está activa (no hay token aún)
   id?:            string;
   email?:         string;
   identities?:    any[];
-  // Señal de que el email necesita ser confirmado
   email_confirmed_at?: string | null;
 }
 
 // ── TOKEN EXPIRY ───────────────────────────────────────────────────
 function isTokenExpired(sess: SbSession): boolean {
   if (!sess.expires_at) return false;
-  return Date.now() / 1000 > sess.expires_at - 60; // margen de 60 s
+  return Date.now() / 1000 > sess.expires_at - 60;
 }
 
 // ── CLIENTE ────────────────────────────────────────────────────────
@@ -54,8 +49,6 @@ export const sb = {
     return { ...this.h, "Authorization": `Bearer ${token}` };
   },
 
-  // Convierte la respuesta raw de Supabase en una SbSession tipada.
-  // expires_in (segundos relativos) → expires_at (timestamp absoluto).
   normalizeSession(raw: SbAuthResponse): SbSession | null {
     if (!raw.access_token || !raw.user?.id) return null;
     const expires_at = raw.expires_in
@@ -73,8 +66,7 @@ export const sb = {
 
   async signUp(email: string, password: string): Promise<SbAuthResponse> {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
-      method: "POST",
-      headers: this.h,
+      method: "POST", headers: this.h,
       body: JSON.stringify({ email, password }),
     });
     return r.json();
@@ -82,29 +74,23 @@ export const sb = {
 
   async signIn(email: string, password: string): Promise<SbAuthResponse> {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: this.h,
+      method: "POST", headers: this.h,
       body: JSON.stringify({ email, password }),
     });
     return r.json();
   },
 
-  // Refresca el access_token usando el refresh_token.
   async refreshSession(refreshToken: string): Promise<SbSession | null> {
     try {
       const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-        method: "POST",
-        headers: this.h,
+        method: "POST", headers: this.h,
         body: JSON.stringify({ refresh_token: refreshToken }),
       });
       const data: SbAuthResponse = await r.json();
       return this.normalizeSession(data);
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   },
 
-  // Refresca si está próximo a expirar; devuelve sesión válida o null.
   async ensureFreshSession(sess: SbSession): Promise<SbSession | null> {
     if (!isTokenExpired(sess)) return sess;
     if (!sess.refresh_token)   return null;
@@ -119,46 +105,36 @@ export const sb = {
 
   async signOut(token: string): Promise<void> {
     await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
-      method: "POST",
-      headers: this.authH(token),
+      method: "POST", headers: this.authH(token),
     });
   },
 
   async resetPassword(email: string): Promise<void> {
     await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
-      method: "POST",
-      headers: this.h,
+      method: "POST", headers: this.h,
       body: JSON.stringify({ email }),
     });
   },
 
-  // Reenvía el email de confirmación de cuenta.
   async resendConfirmation(email: string): Promise<void> {
     await fetch(`${SUPABASE_URL}/auth/v1/resend`, {
-      method: "POST",
-      headers: this.h,
+      method: "POST", headers: this.h,
       body: JSON.stringify({ type: "signup", email }),
     });
   },
 
-  // Valida que el token sea válido contra Supabase. Devuelve null si expiró.
   async getUser(token: string): Promise<SbUser | null> {
     try {
-      const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-        headers: this.authH(token),
-      });
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: this.authH(token) });
       if (!r.ok) return null;
       const d = await r.json();
       return d?.id ? (d as SbUser) : null;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   },
 
   async updatePassword(token: string, newPassword: string): Promise<SbAuthResponse> {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      method: "PUT",
-      headers: this.authH(token),
+      method: "PUT", headers: this.authH(token),
       body: JSON.stringify({ password: newPassword }),
     });
     return r.json();
@@ -178,10 +154,7 @@ export const sb = {
   async upsertProfile(token: string, userId: string, data: Record<string, any>): Promise<any> {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
       method: "POST",
-      headers: {
-        ...this.authH(token),
-        "Prefer": "resolution=merge-duplicates,return=representation",
-      },
+      headers: { ...this.authH(token), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify({ id: userId, ...data }),
     });
     return r.json();
@@ -195,7 +168,7 @@ export const sb = {
 
   async getSubscription(token: string, userId: string): Promise<any | null> {
     const r = await fetch(
-      `${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}&status=eq.active&select=*&limit=1`,
+      `${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}&status=in.(trial,trialing,active,past_due,cancelled)&order=created_at.desc&select=*&limit=1`,
       { headers: this.authH(token) }
     );
     const d = await r.json();
@@ -204,27 +177,33 @@ export const sb = {
 
   async startFreeTrial(token: string): Promise<any> {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/start_free_trial`, {
-      method: "POST",
-      headers: this.authH(token),
-      body: JSON.stringify({}),
+      method: "POST", headers: this.authH(token), body: JSON.stringify({}),
     });
     return r.json();
   },
 
-  async cancelSubscription(token: string): Promise<any> {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_subscription_at_period_end`, {
+  // ── ACCOUNT (Netflix-style) ───────────────────────────────────────
+
+  async getAccountSummary(token: string): Promise<any> {
+    const r = await fetch("/api/account/summary", {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    return r.json();
+  },
+
+  async cancelSubscription(token: string, reason?: string): Promise<any> {
+    const r = await fetch("/api/subscription/cancel", {
       method: "POST",
-      headers: this.authH(token),
-      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({ reason: reason || null }),
     });
     return r.json();
   },
 
   async reactivateSubscription(token: string): Promise<any> {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/reactivate_subscription`, {
+    const r = await fetch("/api/subscription/reactivate", {
       method: "POST",
-      headers: this.authH(token),
-      body: JSON.stringify({}),
+      headers: { "Authorization": `Bearer ${token}` },
     });
     return r.json();
   },
@@ -233,9 +212,7 @@ export const sb = {
 
   async incrementSimulationCount(token: string): Promise<any> {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_simulation_count`, {
-      method: "POST",
-      headers: this.authH(token),
-      body: JSON.stringify({}),
+      method: "POST", headers: this.authH(token), body: JSON.stringify({}),
     });
     return r.json();
   },
@@ -251,17 +228,14 @@ export const sb = {
 
   async saveSimulation(token: string, params: any): Promise<any> {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/save_simulation`, {
-      method: "POST",
-      headers: this.authH(token),
-      body: JSON.stringify(params),
+      method: "POST", headers: this.authH(token), body: JSON.stringify(params),
     });
     return r.json();
   },
 
   async markSimulationWon(token: string, simulationId: string, budgetFinal: number): Promise<any> {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/mark_simulation_won`, {
-      method: "POST",
-      headers: this.authH(token),
+      method: "POST", headers: this.authH(token),
       body: JSON.stringify({ p_simulation_id: simulationId, p_budget_final: budgetFinal }),
     });
     return r.json();
@@ -269,8 +243,7 @@ export const sb = {
 
   async markSimulationLost(token: string, simulationId: string, reason?: string): Promise<any> {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/mark_simulation_lost`, {
-      method: "POST",
-      headers: this.authH(token),
+      method: "POST", headers: this.authH(token),
       body: JSON.stringify({ p_simulation_id: simulationId, p_reason: reason ?? null }),
     });
     return r.json();
@@ -278,25 +251,30 @@ export const sb = {
 
   async extendSimulationDeadline(token: string, simulationId: string, newDate: string): Promise<any> {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/extend_simulation_deadline`, {
-      method: "POST",
-      headers: this.authH(token),
+      method: "POST", headers: this.authH(token),
       body: JSON.stringify({ p_simulation_id: simulationId, p_new_date: newDate }),
     });
     return r.json();
   },
 
-  // ── PAGOS ─────────────────────────────────────────────────────────
+  // ── CHECKOUT (suscripción recurrente) ─────────────────────────────
 
-  async startCheckout(payload: {
-    email: string;
-    name: string;
-    appPlanCode: string;
-    userId: string;
-    couponCode?: string | null;
-  }): Promise<{ paymentUrl?: string; error?: string }> {
-    const r = await fetch("/api/subscribe", {
+  async validateCoupon(payload: { code: string; userId: string; planCode: string }): Promise<any> {
+    const r = await fetch("/api/validate-coupon", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return r.json();
+  },
+
+  async startCheckout(token: string, payload: {
+    appPlanCode: string;
+    couponCode?: string | null;
+  }): Promise<{ paymentUrl?: string; subscriptionId?: string; finalAmount?: number; appliedCoupon?: string; error?: string; message?: string }> {
+    const r = await fetch("/api/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
       body: JSON.stringify(payload),
     });
     return r.json();
