@@ -295,7 +295,6 @@ app.post("/api/subscribe", async (req, res) => {
     const subParams = {
       planId: String(planConfig.flow_plan_id),
       customerId: flowCustomerId,
-      subscription_start: "",   // empieza inmediato
     };
     if (appliedFlowCouponId) subParams.couponId = String(appliedFlowCouponId);
 
