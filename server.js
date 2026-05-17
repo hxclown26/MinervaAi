@@ -82,6 +82,7 @@ function signParams(params) {
   return { ...params, s: sig };
 }
 
+// PARCHE 1: logging mejorado en flowPost
 async function flowPost(endpoint, params) {
   const signed = signParams({ apiKey: FLOW_API_KEY, ...params });
   const body   = new URLSearchParams(signed).toString();
@@ -91,10 +92,20 @@ async function flowPost(endpoint, params) {
     body,
   });
   const text = await res.text();
-  let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
   if (!res.ok) {
-    console.error(`Flow POST ${endpoint} → ${res.status}`, json);
-    throw new Error(`Flow ${endpoint} error ${res.status}: ${text}`);
+    console.error("FLOW ERROR");
+    console.error("ENDPOINT:", endpoint);
+    console.error("STATUS:", res.status);
+    console.error("BODY:", json);
+    throw new Error(
+      `Flow ${endpoint} error ${res.status}: ${JSON.stringify(json)}`
+    );
   }
   return json;
 }
@@ -242,6 +253,7 @@ app.post("/api/validate-coupon", async (req, res) => {
  *
  * Body: { appPlanCode, couponCode? }  (auth Bearer JWT requerido)
  */
+// PARCHE 2: /api/subscribe corregido
 app.post("/api/subscribe", async (req, res) => {
   const user = await getUserFromBearerToken(req.headers.authorization);
   if (!user) return res.status(401).json({ error: "unauthorized" });
@@ -284,7 +296,7 @@ app.post("/api/subscribe", async (req, res) => {
       });
       flowCustomerId = created.customerId;
     } catch (err) {
-      // Probablemente ya existe — buscar por externalId
+      // Probablemente ya existe — buscar directamente en Flow por externalId
       const found = await flowGet("customer/list", { filter: user.id });
       const existing = (found?.data || []).find(c => c.externalId === user.id);
       if (existing) flowCustomerId = existing.customerId;
